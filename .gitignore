@@ -1,0 +1,10 @@
+﻿__pycache__/
+*.pyc
+.venv/
+.env
+ReconnectReports/
+*.xlsx
+*.xlsm
+*.csv
+*.crdownload
+user_settings.json
