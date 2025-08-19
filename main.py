@@ -78,6 +78,42 @@ STEP_NODE_MAP = {
 }
 
 # ------------------ Helpers ------------------
+
+def ensure_shortcuts():
+    try:
+        import win32com.client  # pip install pywin32
+    except ImportError:
+        return  # if pywin32 isn't installed, just skip
+
+    from pathlib import Path
+    import os
+
+    root = Path(__file__).resolve().parent
+    target = str(root / "DailyAutomation.bat")  # shortcut launches your batch
+    icon   = str(root / "app.ico")             # include app.ico in repo root
+
+    shell = win32com.client.Dispatch("WScript.Shell")
+
+    # Desktop
+    desktop_dir = Path(os.environ["USERPROFILE"]) / "Desktop"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+    desktop_lnk = desktop_dir / "Daily Automation.lnk"
+
+    # Start Menu
+    start_menu_dir = Path(os.environ["APPDATA"]) / r"Microsoft\Windows\Start Menu\Programs"
+    start_menu_dir.mkdir(parents=True, exist_ok=True)
+    start_lnk = start_menu_dir / "Daily Automation.lnk"
+
+    for link_path in (desktop_lnk, start_lnk):
+        if not link_path.exists():
+            sc = shell.CreateShortcut(str(link_path))
+            sc.TargetPath = target
+            sc.WorkingDirectory = str(root)
+            sc.IconLocation = icon if os.path.exists(icon) else target
+            sc.Description = "Daily Automation"
+            sc.Save()
+
+
 def _step_parts(title_text: str):
     m = re.match(r"^\[(\d+/\d+)\]\s*(.+)$", title_text.strip())
     return (m.group(1), m.group(2)) if m else (None, title_text)
@@ -700,6 +736,7 @@ def run_reports(app: App, selected_reports: list[tuple[str,str,str]]):
 
 # ============================== Entry ==============================
 def main():
+    ensure_shortcuts()
     app = App()
     app.mainloop()
 
