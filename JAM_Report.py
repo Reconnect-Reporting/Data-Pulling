@@ -5,6 +5,8 @@ import pandas as pd
 from pandas.tseries.offsets import MonthEnd
 import datetime as dt
 from pathlib import Path
+import shutil
+
 # ================== PATHS ==================
 ONE_DRIVE = Path(
     os.environ.get("OneDriveCommercial")
@@ -15,6 +17,9 @@ ONE_DRIVE = Path(
 CLEAN_DIR = str(ONE_DRIVE / "data" / "Clean Data" / "Treat")
 MIS_STATS_CSV = os.path.join(CLEAN_DIR, "rpt_MIS_Stats.csv")
 PROGFIN_BASE = os.path.join(CLEAN_DIR, "rpt_ProgStaffFinance")  # .csv / .xlsx / .xls
+
+# Save destination
+DOWNLOADS = Path.home() / "Downloads"
 
 # ================== CONFIG ==================
 TARGET_PROGRAM = "JAM"
@@ -116,7 +121,6 @@ def load_psf_individuals():
         month_ids = set(in_month[ID_COL].astype(str).dropna().unique())
         cumulative_ids |= month_ids
         individual_served[m_name] = len(cumulative_ids)
-        globals()[f"individual_served_{m_name}"] = individual_served[m_name]
 
     # Individuals Served array (Apr..Mar), NaN -> 0
     individual_served_df = (
@@ -138,7 +142,7 @@ def build_cumulative_rows(row_f2f_monthly, row_nonf2f_monthly, fy_end_cap):
     return row_f2f_cum, row_nonf2f_cum, last_month_name
 
 def fill_template_and_save(row_clients_cum, row_f2f_cum, row_nonf2f_cum, fy_end_cap):
-    TEMPLATE_DIR  = TEMPLATE_DIR = str(ONE_DRIVE / "data" / "Report Templates")
+    TEMPLATE_DIR  = str(ONE_DRIVE / "data" / "Report Templates")
     TEMPLATE_BASE = os.path.join(TEMPLATE_DIR, "JAM Report Template")  # .xlsx/.xlsm/.xls
 
     template_path = None
@@ -152,110 +156,40 @@ def fill_template_and_save(row_clients_cum, row_f2f_cum, row_nonf2f_cum, fy_end_
     if template_path is None:
         raise FileNotFoundError("JAM Report Template (.xlsx/.xlsm/.xls) not found in the template folder.")
 
-    tmp_out = os.path.join(
-        tempfile.gettempdir(),
-        f"JAM_Report_Auto_{fy_end_cap.strftime('%Y%m')}.xlsx"
-    )
+    out_path = DOWNLOADS / f"JAM_Report_{fy_end_cap.strftime('%Y%m')}.xlsx"
 
-    use_openpyxl = False
-    try:
-        import openpyxl  # noqa
-        if template_ext in (".xlsx", ".xlsm"):
-            use_openpyxl = True
-    except Exception:
-        openpyxl = None  # noqa
+    import openpyxl
+    wb = openpyxl.load_workbook(template_path)
+    ws = wb.active  # first sheet
+    start_col = 3  # C
 
-    if use_openpyxl:
-        import openpyxl
-        wb = openpyxl.load_workbook(template_path)
-        ws = wb.active  # first sheet
-        start_col = 3  # C
+    # Row 8: Individuals Served (cumulative)
+    for i, val in enumerate(row_clients_cum):
+        ws.cell(row=8, column=start_col + i, value=int(val))
 
-        # Row 8: Individuals Served (cumulative, NaN->0)
-        for i, val in enumerate(row_clients_cum):
-            ws.cell(row=8, column=start_col + i, value=int(val))
+    # Row 11: Face-to-Face
+    for i, val in enumerate(row_f2f_cum):
+        ws.cell(row=11, column=start_col + i, value=int(val))
 
-        # Row 11: Face-to-Face (cumulative FY-to-date)
-        for i, val in enumerate(row_f2f_cum):
-            ws.cell(row=11, column=start_col + i, value=int(val))
+    # Row 14: Non-Face-to-Face
+    for i, val in enumerate(row_nonf2f_cum):
+        ws.cell(row=14, column=start_col + i, value=int(val))
 
-        # Row 14: Non-Face-to-Face (cumulative FY-to-date)
-        for i, val in enumerate(row_nonf2f_cum):
-            ws.cell(row=14, column=start_col + i, value=int(val))
-
-        wb.save(tmp_out)
-    else:
-        import win32com.client as win32
-        excel = win32.Dispatch("Excel.Application")
-        excel.Visible = False
-        wb = excel.Workbooks.Open(template_path)
-        try:
-            ws = wb.ActiveSheet
-            start_col = 3  # C
-
-            for i, val in enumerate(row_clients_cum):
-                ws.Cells(8,  start_col + i).Value = int(val)
-            for i, val in enumerate(row_f2f_cum):
-                ws.Cells(11, start_col + i).Value = int(val)
-            for i, val in enumerate(row_nonf2f_cum):
-                ws.Cells(14, start_col + i).Value = int(val)
-
-            wb.SaveAs(tmp_out, FileFormat=51)  # xlsx
-        finally:
-            wb.Close(SaveChanges=False)
-            excel.Quit()
-
-    return tmp_out
-
-def send_email_with_attachment(tmp_out, fy_end_cap):
-    import win32com.client as win32
-
-    outlook = win32.Dispatch("Outlook.Application")
-    mail = outlook.CreateItem(0)  # olMailItem
-    mail.To = "recreporting@reconnect.on.ca"
-    subject = f"JAM Report – cumulative up to {fy_end_cap.strftime('%B %Y')}"
-    mail.Subject = subject
-    mail.Body = (
-        "Hi team,\n\n"
-        "Attached is the JAM report (auto-filled):\n"
-        " - C8:N8  : Individuals Served (cumulative)\n"
-        " - C11:N11: Face-to-Face Visits (cumulative)\n"
-        " - C14:N14: Non-Face-to-Face Visits (cumulative)\n\n"
-        "Best,\nAutomation"
-    )
-    mail.Attachments.Add(Source=tmp_out)
-    mail.Send()
+    wb.save(out_path)
+    return out_path
 
 def main():
-    # --- MIS: get monthly F2F & Non-F2F, then cap and cumulate ---
+    # --- MIS ---
     row_f2f_monthly, row_nonf2f_monthly = load_mis_rows()
-
-    # --- PSF: cumulative Individuals Served & FY end cap (last complete month end) ---
+    # --- PSF ---
     row_clients_cum, fy_end_cap = load_psf_individuals()
-
-    # --- Build cumulative rows for visits, capped at last month ---
+    # --- Cumulative rows ---
     row_f2f_cum, row_nonf2f_cum, last_month_name = build_cumulative_rows(
         row_f2f_monthly, row_nonf2f_monthly, fy_end_cap
     )
-
-    # Optional console printout (kept from your version)
-    print("=== Cumulative Unique Clients (JAM) up to last month ===")
-    for month, val in zip(MONTHS_FULL, row_clients_cum):
-        if val:  # print populated months
-            print(f"{month}: {val}")
-
-    # --- Fill template and save to temp ---
-    tmp_out = fill_template_and_save(row_clients_cum, row_f2f_cum, row_nonf2f_cum, fy_end_cap)
-
-    # --- Email + cleanup ---
-    send_email_with_attachment(tmp_out, fy_end_cap)
-
-    try:
-        os.remove(tmp_out)
-    except Exception:
-        pass
-
-    print("Email sent to recreporting@reconnect.on.ca (temp file removed).")
+    # --- Save directly to Downloads ---
+    out_path = fill_template_and_save(row_clients_cum, row_f2f_cum, row_nonf2f_cum, fy_end_cap)
+    print(f"[INFO] JAM report saved to: {out_path}")
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-import sys, os, tempfile
+import sys, os, tempfile, shutil
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
@@ -12,17 +12,10 @@ ONE_DRIVE = Path(
 )
 INPUT_PATH = ONE_DRIVE / "data" / "Clean Data" / "AlayaCare" / "HHRI(VHA).csv"
 
-
-# ---- Email config ----
-RECIPIENTS = "recreporting@reconnect.on.ca"
-SUBJECT = f"HHRI Hours (encrypted) - {datetime.now():%Y-%m-%d}"
-BODY = (
-    "Hi team,\n\n"
-    "Please find the HHRI Hours report attached. Could you please confirm the hours. Thanks!\n\n"
-    "Best,\nAutomated Sender"
-)
-OPEN_PASSWORD = "clients"  # password to open the workbook
+# ---- Output (local Downloads) ----
+DOWNLOADS = Path.home() / "Downloads"
 ATTACHMENT_DISPLAY_NAME = "HHRI Hours.xlsx"
+OPEN_PASSWORD = "clients"  # password to open the workbook
 
 def clean_hhri_csv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -62,19 +55,6 @@ def excel_csv_to_encrypted_xlsx(csv_path: Path, xlsx_path: Path, password: str):
         if wb: wb.Close(SaveChanges=False)
         if excel: excel.Quit()
 
-def send_email_with_attachment(to_addrs: str, subject: str, body: str, attachment_path: Path, display_name: str):
-    """Attach file and rename it in the email to `display_name`."""
-    outlook = win32.Dispatch("Outlook.Application")
-    mail = outlook.CreateItem(0)
-    mail.To = to_addrs
-    mail.Subject = subject
-    mail.Body = body
-    att = mail.Attachments.Add(str(attachment_path))
-    # PR_DISPLAY_NAME (0x3001, PT_UNICODE 0x001F)
-    att.PropertyAccessor.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x3001001F", display_name)
-    # mail.Display()  # uncomment to preview before sending
-    mail.Send()
-
 def main():
     if not INPUT_PATH.exists():
         raise FileNotFoundError(f"Input not found: {INPUT_PATH}")
@@ -82,24 +62,27 @@ def main():
     # 1) Clean data from CSV
     df = clean_hhri_csv(INPUT_PATH)
 
-    # 2) Use temp workspace; no permanent save
+    # 2) Use temp workspace to let Excel do the encryption
     tmpdir = Path(tempfile.mkdtemp(prefix="hhri_"))
     try:
         csv_clean = tmpdir / "hhri_clean.csv"
-        xlsx_enc = tmpdir / "hhri_encrypted.xlsx"
+        xlsx_enc_tmp = tmpdir / "hhri_encrypted.xlsx"
 
         # Save cleaned dataframe back to CSV (simple + reliable for Excel)
         df.to_csv(csv_clean, index=False, encoding="utf-8-sig")
 
         # 3) Excel converts CSV -> encrypted XLSX
-        excel_csv_to_encrypted_xlsx(csv_clean, xlsx_enc, OPEN_PASSWORD)
+        excel_csv_to_encrypted_xlsx(csv_clean, xlsx_enc_tmp, OPEN_PASSWORD)
 
-        # 4) Email it as "HHRI Hours.xlsx"
-        send_email_with_attachment(RECIPIENTS, SUBJECT, BODY, xlsx_enc, ATTACHMENT_DISPLAY_NAME)
-        print(f"[INFO] Email sent to {RECIPIENTS}")
+        # 4) Copy the encrypted file to local Downloads with friendly name
+        DOWNLOADS.mkdir(parents=True, exist_ok=True)
+        out_path = DOWNLOADS / ATTACHMENT_DISPLAY_NAME
+        shutil.copy2(xlsx_enc_tmp, out_path)
+        print(f"[INFO] Saved to: {out_path}")
+
     finally:
-        # 5) Cleanup everything
-        for p in [*tmpdir.glob("*")]:
+        # 5) Cleanup temp workspace
+        for p in tmpdir.glob("*"):
             try: os.remove(p)
             except Exception: pass
         try: os.rmdir(tmpdir)

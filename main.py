@@ -1,16 +1,22 @@
-# main.py
-import importlib
-import threading
-import time
-import traceback
-import queue
-import sys
-import os
-import json
+# main.py (PySide6 version with tabs + responsive flow, no blinking)
+
+import os, sys, json, time, traceback, importlib, re, threading, queue
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk
-import re
+
+# ---- PySide6 / Qt ----
+from PySide6.QtCore import Qt, QTimer, QPointF, QSize
+from PySide6.QtGui import (
+    QIcon, QColor, QBrush, QPen, QPolygonF, QPixmap, QPainterPath, QPainter
+)
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QScrollArea, QFrame,
+    QProgressBar, QPlainTextEdit, QGridLayout,
+    QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPixmapItem,
+    QGraphicsPathItem, QGraphicsDropShadowEffect
+)
+
+# COM (Outlook/Excel) init for worker threads
 import pythoncom
 
 # ------------------ SIMPLE SETTINGS PERSISTENCE ------------------
@@ -32,21 +38,22 @@ def _apply_treat_env(username: str, password: str) -> None:
     os.environ["TREAT_USERNAME"] = username
     os.environ["TREAT_PASSWORD"] = password
 
-# ------------------ PIPELINE STEPS (execution order unchanged) ------------------
+# ------------------ PIPELINE STEPS ------------------
 STEPS = [
-    ("clean",  "[1/6] Cleaning Folder",                 "Clean_Download_Folder"),
-    ("treat",  "[2/6] Pulling Treat Reports",           "Treat_Pulling"),
-    ("move",   "[3/6] Move Treat files to One-Drive",   "Treat_File_Moving"),
-    ("tclean", "[4/6] Cleaning Treat Reports",          "Treat_Data_Cleaning"),
-    ("alaya",  "[5/6] Pulling AlayaCare Reports",       "AlayaCare_Pulling"),
-    ("aclean", "[6/6] AlayaCare Data Cleaning",         "AlayaCare_Data_Cleaning"),
+    ("clean",  "[1/6] Cleaning Folder",               "Clean_Download_Folder"),
+    ("treat",  "[2/6] Pulling Treat Reports",         "Treat_Pulling"),
+    ("move",   "[3/6] Move Treat files to One-Drive", "Treat_File_Moving"),
+    ("alaya",  "[5/6] Pulling AlayaCare Reports",     "AlayaCare_Pulling"),
+    ("tclean", "[4/6] Cleaning Treat Reports",        "Treat_Data_Cleaning"),
+    ("aclean", "[6/6] AlayaCare Data Cleaning",       "AlayaCare_Data_Cleaning"),
 ]
 
 # ------------------ REPORTS ------------------
 REPORTS = [
-    ("hhri", "HHRI (email password-protected Excel)", "HHRI_Hours"),
-    ("fame", "CMHA Peel – FAME Monthly (email Excel)", "FAME_Report"),
-    ("jam",  "JAM Report (email Excel)", "JAM_Report"),
+    ("hhri", "HHRI (Save to Downloads)", "HHRI_Hours"),
+    ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "FAME_Report"),
+    ("jam",  "JAM Report (Save to Downloads)", "JAM_Report"),
+    ("ocan","Overdue OCAN List (Save to Downloads)", "Overdue_OCAN_List")
 ]
 
 STATUS_COLORS = {
@@ -60,685 +67,626 @@ STATUS_COLORS = {
 FLOW_LABELS = {
     "clean":        "Clean Folder",
     "treat_box":    "Treat",
-    "alayacare":    "AlayaCare",
-    "downloads":    "Downloads",
-    "email":        "Email Inbox",   # below Downloads
     "raw":          "Raw Data",
+    "alayacare":    "AlayaCare",
     "clean_data":   "Clean Data",
+    # keeping these in case you still want them visible
+    "downloads":    "Downloads",
+    "email":        "Email Inbox",
 }
 
-# ---------- Map pipeline step -> which node(s) should light up ----------
+# Map pipeline step -> which node(s) should light up
 STEP_NODE_MAP = {
     "clean":  ["clean"],
-    "treat":  ["treat_box", "downloads"],
+    "treat":  ["treat_box","downloads"],
     "move":   ["raw"],
-    "tclean": ["clean_data"],
-    "alaya":  ["alayacare", "email"],
+    "alaya":  ["alayacare","email","raw"],
+    "tclean": [],
     "aclean": ["clean_data"],
 }
 
+# Which edges should change per pipeline step
+STEP_EDGE_MAP = {
+    "clean":  [("clean","treat_box")],
+    "treat":  [("treat_box", "downloads")],
+    "move":   [("downloads", "raw")],
+    "alaya":  [("alayacare", "email"),("email","raw")],
+    "tclean": [],  # stays green when cleaning
+    "aclean": [("raw", "clean_data")],  # same node reused
+}
+
+# All edges in the diagram (used for resetting)
+ALL_EDGES = [
+    ("clean", "treat_box"),
+    ("treat_box", "downloads"),
+    ("downloads","raw"),
+    ("alayacare","email"),
+    ("email", "raw"),
+    ("raw", "clean_data"),
+]
+
+
 # ------------------ Helpers ------------------
-
-def ensure_shortcuts():
-    try:
-        import win32com.client  # pip install pywin32
-    except ImportError:
-        return  # if pywin32 isn't installed, just skip
-
-    from pathlib import Path
-    import os
-
-    root = Path(__file__).resolve().parent
-    target = str(root / "DailyAutomation.bat")  # shortcut launches your batch
-    icon   = str(root / "app.ico")             # include app.ico in repo root
-
-    shell = win32com.client.Dispatch("WScript.Shell")
-
-    # Desktop
-    desktop_dir = Path(os.environ["USERPROFILE"]) / "Desktop"
-    desktop_dir.mkdir(parents=True, exist_ok=True)
-    desktop_lnk = desktop_dir / "Daily Automation.lnk"
-
-    # Start Menu
-    start_menu_dir = Path(os.environ["APPDATA"]) / r"Microsoft\Windows\Start Menu\Programs"
-    start_menu_dir.mkdir(parents=True, exist_ok=True)
-    start_lnk = start_menu_dir / "Daily Automation.lnk"
-
-    for link_path in (desktop_lnk, start_lnk):
-        if not link_path.exists():
-            sc = shell.CreateShortcut(str(link_path))
-            sc.TargetPath = target
-            sc.WorkingDirectory = str(root)
-            sc.IconLocation = icon if os.path.exists(icon) else target
-            sc.Description = "Daily Automation"
-            sc.Save()
-
-
 def _step_parts(title_text: str):
     m = re.match(r"^\[(\d+/\d+)\]\s*(.+)$", title_text.strip())
     return (m.group(1), m.group(2)) if m else (None, title_text)
 
 def _get_runner(module_name: str):
-    # Import or reload so modules re-read env vars each step
+    # reload so modules re-read env vars each step
     if module_name in sys.modules:
         mod = importlib.reload(sys.modules[module_name])
     else:
         mod = importlib.import_module(module_name)
-    if hasattr(mod, "run") and callable(mod.run):
-        return mod.run
-    if hasattr(mod, "main") and callable(mod.main):
-        return mod.main
-    raise AttributeError(
-        f"{module_name} has no callable run() or main(). "
-        "Wrap your script logic in a function named run() or main()."
-    )
+    if hasattr(mod, "run") and callable(mod.run):  return mod.run
+    if hasattr(mod, "main") and callable(mod.main): return mod.main
+    raise AttributeError(f"{module_name} has no callable run() or main().")
 
-# ------------------ A simple reusable scrollable frame ------------------
-class ScrollableFrame(ttk.Frame):
-    def __init__(self, parent, height=200):
+# ------------------ Qt FlowView with optional picture nodes ------------------
+class FlowView(QGraphicsView):
+    # --- Responsive layout baseline (design-space) ---
+    DESIGN_W = 1800    # your original coordinate width
+    DESIGN_H = 360     # your original coordinate height
+
+    DEFAULT_ICON_SIZE = 220
+    BASE_ICON_SIZES = {
+        "clean": 220, "treat_box": 400, "alayacare": 400,
+        "downloads": 180, "email": 180, "raw": 220, "clean_data": 220,
+    }
+    BASE_NODE_POS = {
+        "clean": (180, 60),
+        "treat_box": (600, 60),
+        "alayacare": (600, 270),
+        "downloads": (1000, 60),
+        "email":     (1000, 270),
+        "raw": (1350, 160),
+        "clean_data": (1750, 160),
+    }
+    SCENE_PADDING = 60  # extra breathing room around everything
+
+    def __init__(self, parent=None, icons_dir: Path | None = None):
         super().__init__(parent)
-        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
-        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
-        self.inner = ttk.Frame(self.canvas)
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        # Correct render hints: use QPainter flags, not QPainterPath
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setRenderHint(QPainter.TextAntialiasing, True)
+        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setMinimumHeight(300)
 
-        self.window_id = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", self._on_inner_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.icons_dir = icons_dir or (Path(__file__).resolve().parent / "icons")
 
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.vsb.pack(side="right", fill="y")
+        # state storage
+        self._nodes = {}   # key -> {"pix": item, "bbox": (x0,y0,x1,y1), "effect": effect}
+        self._edges = []   # list of dicts per edge (see _add_arrow)
+        self._states = {
+            "clean": "pending", "treat_box": "pending", "alayacare": "pending",
+            "downloads": "pending", "email": "pending", "raw": "pending", "clean_data": "pending",
+        }
 
-        # set a fixed visible height; contents can be taller and will scroll
-        self.canvas.configure(height=height)
+        self.rebuild()
 
-        # smooth mouse-wheel scrolling while cursor is over the widget
-        self.inner.bind("<Enter>", lambda e: self._bind_mousewheel(True))
-        self.inner.bind("<Leave>", lambda e: self._bind_mousewheel(False))
+    # ---------- responsive helpers ----------
+    def _scale_factor(self) -> float:
+        # Fit the design-space into the current viewport, keep aspect ratio
+        vw = max(1, self.viewport().width()  - 2*self.SCENE_PADDING)
+        vh = max(1, self.viewport().height() - 2*self.SCENE_PADDING)
+        sx = vw / self.DESIGN_W
+        sy = vh / self.DESIGN_H
+        s = min(sx, sy)
+        # clamp to keep icons readable (tweak as you like)
+        return max(0.35, min(s, 2.0))
 
-    def _on_inner_configure(self, event):
-        # Update scrollregion to encompass the inner frame
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    def _scaled_icon_size(self, key: str, s: float) -> int:
+        base = self.BASE_ICON_SIZES.get(key, self.DEFAULT_ICON_SIZE)
+        return int(max(24, base * s))
 
-    def _on_canvas_configure(self, event):
-        # Make inner frame width match canvas width
-        self.canvas.itemconfigure(self.window_id, width=event.width)
+    def _scaled_pos(self, key: str, s: float) -> tuple[float, float]:
+        x, y = self.BASE_NODE_POS[key]
+        return (x * s, y * s)
 
-    def _bind_mousewheel(self, bind):
-        func = self._on_mousewheel
-        widget = self.canvas
-        if bind:
-            widget.bind_all("<MouseWheel>", func)      # Windows
-            widget.bind_all("<Button-4>", func)        # Linux up
-            widget.bind_all("<Button-5>", func)        # Linux down
+    # ---------- utilities ----------
+    def _icon_for(self, key: str) -> QPixmap | None:
+        p = self.icons_dir / f"{key}.png"
+        if p.exists():
+            pm = QPixmap(str(p))
+            if not pm.isNull():
+                return pm
+        return None
+
+    def _scaled(self, pm: QPixmap, size_px: int) -> QPixmap:
+        size_px = int(max(24, min(2048, size_px)))
+        return pm.scaled(QSize(size_px, size_px), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    # ---------- node/edge drawing ----------
+    def _add_node_image(self, key: str, cx: float, cy: float, size_px: int):
+        pm = self._icon_for(key)
+        if pm is None:
+            pm = QPixmap(size_px, size_px); pm.fill(QColor("#e8e8e8"))
+        spm = self._scaled(pm, size_px)
+        pix = QGraphicsPixmapItem(spm)
+        pix.setZValue(10)
+        self._scene.addItem(pix)
+
+        # center at (cx, cy)
+        x = cx - spm.width() / 2
+        y = cy - spm.height() / 2
+        pix.setPos(x, y)
+        bbox = (x, y, x + spm.width(), y + spm.height())
+
+        eff = QGraphicsDropShadowEffect()
+        eff.setBlurRadius(0); eff.setOffset(0, 0); eff.setColor(QColor(0, 0, 0, 0))
+        pix.setGraphicsEffect(eff)
+
+        self._nodes[key] = {"pix": pix, "bbox": bbox, "effect": eff}
+
+    def _arrow_points(self, from_key, to_key):
+        fx0, fy0, fx1, fy1 = self._nodes[from_key]["bbox"]
+        tx0, ty0, tx1, ty1 = self._nodes[to_key]["bbox"]
+        start = QPointF(fx1, (fy0 + fy1) / 2.0)
+        end   = QPointF(tx0, (ty0 + ty1) / 2.0)
+        return start, end
+
+    # ---- EDGE state helpers ----
+    def _edge_state_color(self, state: str) -> QColor:
+        if state in ("running", "done"): return QColor("#18794e")
+        if state == "fail":              return QColor("#b54708")
+        return QColor("#888")
+
+    def _apply_edge_pen(self, e, color: QColor, width: int = 4):
+        pen = QPen(color, width)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        e["path"].setPen(pen)
+        e["head"].setBrush(QBrush(color))
+        e["head"].setPen(QPen(color))
+
+    def set_edge_state(self, from_key: str, to_key: str, state: str):
+        for e in self._edges:
+            if e["from"] == from_key and e["to"] == to_key:
+                e["state"] = state
+                col = self._edge_state_color(state)
+                self._apply_edge_pen(e, col, width=4)
+
+                # steady glow (no animation)
+                for eff_key in ("path_effect", "head_effect"):
+                    eff = e.get(eff_key)
+                    if eff is None:
+                        eff = QGraphicsDropShadowEffect()
+                        eff.setOffset(0, 0)
+                        if eff_key == "path_effect":
+                            e["path"].setGraphicsEffect(eff)
+                        else:
+                            e["head"].setGraphicsEffect(eff)
+                        e[eff_key] = eff
+
+                    if state == "pending":
+                        eff.setBlurRadius(0); eff.setColor(QColor(0, 0, 0, 0))
+                    else:
+                        eff.setBlurRadius(20); eff.setColor(col)
+                break
+
+    def _add_arrow(self, from_key, to_key):
+        start, end = self._arrow_points(from_key, to_key)
+
+        # Cubic curve for a nicer arrow
+        dx = (end.x() - start.x())
+        c1 = QPointF(start.x() + dx * 0.35, start.y())
+        c2 = QPointF(end.x()   - dx * 0.35, end.y())
+
+        path = QPainterPath(start)
+        path.cubicTo(c1, c2, end)
+
+        path_item = QGraphicsPathItem(path)
+        base_col = QColor("#888")
+        pen = QPen(base_col, 4)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        path_item.setPen(pen)
+        path_item.setZValue(5)
+        self._scene.addItem(path_item)
+
+        # arrowhead aligned with tangent
+        tangent = path.angleAtPercent(1.0)  # degrees
+        head_len = 16
+        head_wid = 8
+        base = end
+        from math import radians, cos, sin
+        t = radians(-tangent)
+        ux, uy = cos(t), sin(t)
+        left  = QPointF(base.x() - head_len*ux + head_wid*uy, base.y() - head_len*uy - head_wid*ux)
+        right = QPointF(base.x() - head_len*ux - head_wid*uy, base.y() - head_len*uy + head_wid*ux)
+        head = QGraphicsPolygonItem(QPolygonF([base, left, right]))
+        head.setBrush(QBrush(base_col))
+        head.setPen(QPen(base_col))
+        head.setZValue(6)
+        self._scene.addItem(head)
+
+        self._edges.append({
+            "from": from_key,
+            "to": to_key,
+            "path": path_item,
+            "head": head,
+            "state": "pending",
+            "path_effect": None,
+            "head_effect": None,
+        })
+
+    # ---------- build / rebuild ----------
+    def rebuild(self):
+        self._scene.clear()
+        self._nodes.clear()
+        self._edges.clear()
+
+        s = self._scale_factor()
+
+        # place nodes using scaled positions & sizes
+        for key in self.BASE_NODE_POS.keys():
+            cx, cy   = self._scaled_pos(key, s)
+            size_px  = self._scaled_icon_size(key, s)
+            self._add_node_image(key, cx, cy, size_px)
+
+        # arrows (same logical flow)
+        self._add_arrow("clean", "treat_box")
+        self._add_arrow("treat_box", "downloads")
+        self._add_arrow("alayacare", "email")
+        self._add_arrow("downloads", "raw")
+        self._add_arrow("email", "raw")
+        self._add_arrow("raw", "clean_data")
+
+        # re-apply saved states (steady glow)
+        for k, st in self._states.items():
+            self._apply_state(k, st)
+
+        # Scene rect sized to scaled design, with padding
+        pad = self.SCENE_PADDING
+        scene_w = self.DESIGN_W * s
+        scene_h = self.DESIGN_H * s
+        self._scene.setSceneRect(-pad, -pad, scene_w + 2*pad, scene_h + 2*pad)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # Rebuild after resize; singleShot avoids thrashing while dragging
+        QTimer.singleShot(0, self.rebuild)
+
+    # ---------- node state (steady glow) ----------
+    def _state_color(self, state: str) -> QColor:
+        if state in ("running", "done"): return QColor("#18794e")   # GREEN
+        if state == "fail":              return QColor("#b54708")
+        return QColor(0, 0, 0, 0)
+
+    def _apply_state(self, key, state):
+        self._states[key] = state
+        node = self._nodes.get(key)
+        if not node: return
+        eff: QGraphicsDropShadowEffect = node["effect"]
+        col = self._state_color(state)
+        if state == "pending":
+            eff.setBlurRadius(0); eff.setColor(QColor(0, 0, 0, 0))
         else:
-            widget.unbind_all("<MouseWheel>")
-            widget.unbind_all("<Button-4>")
-            widget.unbind_all("<Button-5>")
+            eff.setBlurRadius(28); eff.setColor(col)
 
-    def _on_mousewheel(self, event):
-        # Normalize wheel delta across platforms
-        if event.num == 4 or getattr(event, "delta", 0) > 0:
-            self.canvas.yview_scroll(-1, "units")
-        else:
-            self.canvas.yview_scroll(1, "units")
+    # external API used by MainWindow
+    def set_node_state(self, key, state):
+        self._apply_state(key, state)
 
-# ============================== App ==============================
-class App(tk.Tk):
+# ------------------ Main Window ------------------
+class MainWindow(QMainWindow):
+    
+    def _toggle_creds(self):
+        self.creds_group.setVisible(not self.creds_group.isVisible())
+
     def __init__(self):
         super().__init__()
-        self.title("Daily Automation")
-        self.geometry("1100x760")  # a bit taller (bigger log box)
+        self.setWindowTitle("Daily Automation")
+        self.resize(1200, 800)
+        icon_path = Path(__file__).with_name("app.ico")
+        if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
 
-        try: self.iconbitmap("app.ico")
-        except Exception: pass
-        try: ttk.Style().theme_use("vista")
-        except Exception: pass
-
-        style = ttk.Style()
-        style.configure("Title.TLabel", font=("Segoe UI", 18, "bold"))
-        style.configure("Big.TButton", font=("Segoe UI", 14, "bold"), padding=(20, 14))
-        style.configure("Back.TButton", font=("Segoe UI", 10), padding=(12, 8))
-
-        # Load saved creds (if any) and apply to env so steps import with them
+        # settings/env
         self.settings = _load_settings()
         if "TREAT_USERNAME" in self.settings:
             os.environ["TREAT_USERNAME"] = self.settings["TREAT_USERNAME"]
         if "TREAT_PASSWORD" in self.settings:
             os.environ["TREAT_PASSWORD"] = self.settings["TREAT_PASSWORD"]
 
+        # thread queue
         self.q = queue.Queue()
-        self.worker: threading.Thread | None = None
         self.running = False
 
-        self.content = ttk.Frame(self, padding=16)
-        self.content.pack(fill="both", expand=True)
+        # --- central layout ---
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        v = QVBoxLayout(central)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(8)
 
-        self.log_frame = ttk.Frame(self, padding=(16, 0, 16, 16))
-        self.log_frame.pack(fill="both", expand=False)
-        self.log = tk.Text(self.log_frame, height=14, wrap="word")  # larger box
-        self.log.pack(side="left", fill="both", expand=True)
-        sb = ttk.Scrollbar(self.log_frame, command=self.log.yview)
-        sb.pack(side="right", fill="y")
-        self.log.configure(state="disabled")
-        self.log["yscrollcommand"] = sb.set
+        # Tabs (Data Automation, Reports)
+        self.tabs = QTabWidget()
+        v.addWidget(self.tabs, 1)
 
-        self.frames = {}
-        self._build_frames()
-        self.show("menu")
+        self.tab_auto = QWidget()
+        self.tab_rep  = QWidget()
+        self.tabs.addTab(self.tab_auto, "Data Automation")
+        self.tabs.addTab(self.tab_rep, "Reports")
 
-        self.after(100, self._drain_queue)
+        # ---- Data Automation tab ----
+        auto_layout = QVBoxLayout(self.tab_auto)
+        auto_layout.setSpacing(8)
 
-        self.bind("<Escape>", lambda e: self.show("menu"))
-        self.bind_all("<F5>", lambda e: self.frames["automation"].start_pipeline())
-        self.bind_all("<Control-r>", lambda e: self.frames["automation"].start_pipeline())
+        # Header with Run
+        hdr = QHBoxLayout()
+        back_lbl = QLabel("Data Automation")
+        back_lbl.setStyleSheet("font-size:18px; font-weight:600;")
+        hdr.addWidget(back_lbl)
+        hdr.addStretch(1)
 
-    def _build_frames(self):
-        self.frames["menu"] = MenuScreen(self.content, self)
-        self.frames["automation"] = AutomationScreen(self.content, self)
-        self.frames["reports"] = ReportsScreen(self.content, self)
-        for f in self.frames.values():
-            f.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.btn_run = QPushButton("Run")
+        self.btn_run.clicked.connect(self.start_pipeline)
+        hdr.addWidget(self.btn_run)
 
-    def show(self, name: str):
-        for _, f in self.frames.items():
-            f.lower()
-        self.frames[name].lift()
-        if name == "automation":
-            self.frames[name].reset_status()
-        self._log(f"View: {name.capitalize()}")
+        # 🔽 Add your toggle button here
+        self.btn_toggle_creds = QPushButton("Update Credentials")
+        self.btn_toggle_creds.clicked.connect(self._toggle_creds)
+        hdr.addWidget(self.btn_toggle_creds)
 
+        auto_layout.addLayout(hdr)
+
+        # Treat creds (keep a handle so we can toggle visibility)
+        self.creds_group = QGroupBox("Treat credentials")
+        gl = QGridLayout(self.creds_group); gl.setColumnStretch(1, 1); gl.setColumnStretch(3, 1)
+        self.in_user = QLineEdit(os.getenv("TREAT_USERNAME", self.settings.get("TREAT_USERNAME", "yxu")))
+        self.in_pass = QLineEdit(os.getenv("TREAT_PASSWORD", self.settings.get("TREAT_PASSWORD", "")))
+        self.in_pass.setEchoMode(QLineEdit.Password)
+        gl.addWidget(QLabel("Username"), 0, 0); gl.addWidget(self.in_user, 0, 1)
+        gl.addWidget(QLabel("Password"), 0, 2); gl.addWidget(self.in_pass, 0, 3)
+        self.btn_save_creds = QPushButton("Save")
+        self.btn_save_creds.clicked.connect(self._save_creds)
+        gl.addWidget(self.btn_save_creds, 0, 4)
+
+        # Start hidden; the toggle button will reveal this
+        self.creds_group.setVisible(False)
+
+        auto_layout.addWidget(self.creds_group)
+
+
+        # Flow (with optional icons)
+        self.flow = FlowView(self, icons_dir=Path(__file__).resolve().parent / "icons")
+        auto_layout.addWidget(self.flow)
+
+        # Scrollable steps list
+        steps_group = QGroupBox("Pipeline steps")
+        steps_v = QVBoxLayout(steps_group)
+        self.steps_scroll = QScrollArea(); self.steps_scroll.setWidgetResizable(True)
+        steps_widget = QWidget(); self.steps_scroll.setWidget(steps_widget)
+        self.steps_layout = QVBoxLayout(steps_widget)
+        self.steps_layout.setContentsMargins(8, 8, 8, 8); self.steps_layout.setSpacing(4)
+        self.step_rows = {}
+        for key, title_text, _ in STEPS:
+            row = QWidget(); hl = QHBoxLayout(row); hl.setContentsMargins(0,0,0,0)
+            lbl = QLabel(title_text); lbl.setMinimumWidth(600)
+            st  = QLabel("Pending"); st.setStyleSheet(f"color:{STATUS_COLORS['pending']};")
+            hl.addWidget(lbl, 1); hl.addWidget(st, 0)
+            self.steps_layout.addWidget(row)
+            self.step_rows[key] = {"row": row, "label": lbl, "status": st}
+        steps_v.addWidget(self.steps_scroll)
+        auto_layout.addWidget(steps_group)
+
+        # Controls
+        ctl = QHBoxLayout()
+        self.progress = QProgressBar(); self.progress.setRange(0,0); self.progress.setVisible(False)
+        ctl.addWidget(self.progress); ctl.addStretch(1)
+        auto_layout.addLayout(ctl)
+
+        # ---- Reports tab ----
+        rep_layout = QVBoxLayout(self.tab_rep)
+        rep_layout.setSpacing(8)
+        rep_layout.addWidget(QLabel("<b>Reports</b>"))
+
+        self.report_checks = {}
+        for key, label, _ in REPORTS:
+            cb = QCheckBox(label)
+            rep_layout.addWidget(cb)
+            self.report_checks[key] = cb
+
+        self.btn_run_reports = QPushButton("Create report(s)")
+        self.btn_run_reports.clicked.connect(self.start_reports)
+        rep_layout.addWidget(self.btn_run_reports)
+        rep_layout.addStretch(1)
+
+        # ---- Shared log at the bottom ----
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(5000)
+        v.addWidget(self.log, 0)
+
+        # poll the queue
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._drain_queue)
+        self.timer.start(100)
+
+    # ---- creds
+    def _save_creds(self):
+        u = self.in_user.text().strip()
+        p = self.in_pass.text()
+        _apply_treat_env(u, p)
+        s = dict(_load_settings())
+        s["TREAT_USERNAME"] = u
+        s["TREAT_PASSWORD"] = p
+        _save_settings(s)
+        self._log("Saved Treat credentials (env updated).")
+
+    # ---- logging / queue
     def _log(self, msg: str):
-        self.log.configure(state="normal")
-        self.log.insert("end", msg.rstrip() + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        self.log.appendPlainText(msg.rstrip())
+        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
 
     def _drain_queue(self):
         try:
             while True:
                 typ, payload = self.q.get_nowait()
                 if typ == "status":
-                    self.frames["automation"].set_status(payload["key"], payload["state"], payload.get("text"))
-                    if payload["state"] == "running":
-                        self.frames["automation"].set_progress(True)
+                    self._set_status(payload["key"], payload["state"], payload.get("text"))
                 elif typ == "log":
                     self._log(payload["msg"])
                 elif typ == "done_all":
-                    self.frames["automation"].set_progress(False)
+                    self._set_progress(False)
                     self._log("All steps completed.")
                     self.running = False
-                    self.frames["automation"].set_run_button_state(enabled=True, label="Run")
+                    self.btn_run.setEnabled(True); self.btn_run.setText("Run")
                 elif typ == "failed_all":
-                    self.frames["automation"].set_progress(False)
+                    self._set_progress(False)
                     self._log("Pipeline stopped due to failure.")
                     self.running = False
-                    self.frames["automation"].set_run_button_state(enabled=True, label="Run")
+                    self.btn_run.setEnabled(True); self.btn_run.setText("Run")
                 elif typ == "reports_done":
                     self._log("Report job(s) completed.")
-                    self.frames["reports"].set_reports_button_state(enabled=True, label="Create report(s)")
+                    self.btn_run_reports.setEnabled(True); self.btn_run_reports.setText("Create report(s)")
                 elif typ == "reports_failed":
                     self._log("Report job(s) stopped due to failure.")
-                    self.frames["reports"].set_reports_button_state(enabled=True, label="Create report(s)")
+                    self.btn_run_reports.setEnabled(True); self.btn_run_reports.setText("Create report(s)")
         except queue.Empty:
             pass
-        finally:
-            self.after(100, self._drain_queue)
 
-# ============================== Screens ==============================
-class MenuScreen(ttk.Frame):
-    def __init__(self, parent, app: App):
-        super().__init__(parent)
-        title = ttk.Label(self, text="Welcome", style="Title.TLabel")
-        title.pack(anchor="center", pady=(10, 20))
+    # ---- UI helpers
+    def _set_progress(self, on: bool):
+        self.progress.setVisible(on)
 
-        btns = ttk.Frame(self)
-        btns.pack(expand=True)
-        b1 = ttk.Button(btns, text="Data Automation", style="Big.TButton",
-                        command=lambda: app.show("automation"))
-        b2 = ttk.Button(btns, text="Reports", style="Big.TButton",
-                        command=lambda: app.show("reports"))
-        b1.grid(row=0, column=0, padx=12, pady=12, sticky="nsew")
-        b2.grid(row=0, column=1, padx=12, pady=12, sticky="nsew")
-        btns.columnconfigure(0, weight=1)
-        btns.columnconfigure(1, weight=1)
-        ttk.Label(self, text="Tip: Press Esc to return to this menu", foreground="#666").pack(anchor="center", pady=(8, 0))
-
-class AutomationScreen(ttk.Frame):
-    def __init__(self, parent, app: App):
-        super().__init__(parent)
-        self.app = app
-
-        header = ttk.Frame(self); header.pack(fill="x")
-        ttk.Button(header, text="← Back to Menu", style="Back.TButton",
-                   command=lambda: app.show("menu")).pack(side="left")
-        ttk.Label(header, text="Data Automation", style="Title.TLabel").pack(side="left", padx=12)
-        self.btn_run = ttk.Button(header, text="Run", command=self.start_pipeline); self.btn_run.pack(side="right")
-
-        # --- Treat credentials UI ---
-        creds = ttk.Labelframe(self, text="Treat credentials")
-        creds.pack(fill="x", pady=(8, 0))
-
-        self.var_treat_user = tk.StringVar(value=os.getenv("TREAT_USERNAME", self.app.settings.get("TREAT_USERNAME", "yxu")))
-        self.var_treat_pass = tk.StringVar(value=os.getenv("TREAT_PASSWORD", self.app.settings.get("TREAT_PASSWORD", "")))
-
-        ttk.Label(creds, text="Username").grid(row=0, column=0, padx=8, pady=6, sticky="w")
-        e_user = ttk.Entry(creds, textvariable=self.var_treat_user, width=28)
-        e_user.grid(row=0, column=1, padx=8, pady=6, sticky="we")
-
-        ttk.Label(creds, text="Password").grid(row=0, column=2, padx=8, pady=6, sticky="w")
-        self._pw_entry = ttk.Entry(creds, textvariable=self.var_treat_pass, width=28, show="*")
-        self._pw_entry.grid(row=0, column=3, padx=8, pady=6, sticky="we")
-
-        def _toggle_show():
-            self._pw_entry.configure(show="" if show_var.get() else "*")
-        show_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(creds, text="Show", variable=show_var, command=_toggle_show)\
-            .grid(row=0, column=4, padx=8, pady=6, sticky="w")
-
-        def _save_treat_creds():
-            u = self.var_treat_user.get().strip()
-            p = self.var_treat_pass.get()
-            _apply_treat_env(u, p)  # update process env for upcoming imports
-            s = self.app.settings.copy() if hasattr(self.app, "settings") else {}
-            s["TREAT_USERNAME"] = u
-            s["TREAT_PASSWORD"] = p  # NOTE: plain text for simplicity
-            _save_settings(s)
-            self.app.settings = s
-            self.app._log("Saved Treat credentials (env updated).")
-
-        ttk.Button(creds, text="Save", command=_save_treat_creds)\
-            .grid(row=0, column=5, padx=8, pady=6, sticky="w")
-
-        # Enter to save
-        e_user.bind("<Return>", lambda _e: _save_treat_creds())
-        self._pw_entry.bind("<Return>", lambda _e: _save_treat_creds())
-
-        # grid stretch
-        creds.columnconfigure(1, weight=1)
-        creds.columnconfigure(3, weight=1)
-
-        # -------- Flow Chart (responsive) --------
-        self.flow = tk.Canvas(self, height=300, bg="#ffffff", highlightthickness=1, highlightbackground="#dddddd")
-        self.flow.pack(fill="x", pady=(10, 8))
-        self.flow.bind("<Configure>", self._on_flow_resize)
-
-        self._flow_nodes = {}                       # node_key -> {"rect": id, "text": id, "bbox": (...)}
-        self._flow_states = {k: "pending" for k in FLOW_LABELS}  # store state per NODE
-        self._FLOW_FILL = {"pending": "#f5f5f5", "running": "#d9e6ff", "done": "#dcf7ea", "fail": "#ffe8cc"}
-        self._FLOW_EDGE = {"pending": "#bfbfbf", "running": STATUS_COLORS["running"],
-                           "done": STATUS_COLORS["done"], "fail": STATUS_COLORS["fail"]}
-
-        # Blinking (animation)
-        self._blinking = set()      # node_keys currently blinking
-        self._blink_on = False
-        self.after(450, self._blink_tick)
-
-        self._draw_flow()
-
-        # -------- Scrollable Steps List --------
-        steps_box = ttk.Labelframe(self, text="Pipeline steps")
-        steps_box.pack(fill="x", expand=False, pady=(8, 0))
-
-        # limit visible height; content scrolls if longer
-        self.steps_scroll = ScrollableFrame(steps_box, height=180)
-        self.steps_scroll.pack(fill="x", expand=True)
-
-        self.rows = {}
-        for key, title_text, _ in STEPS:
-            row = ttk.Frame(self.steps_scroll.inner)
-            row.pack(fill="x", pady=4)
-            lt = ttk.Label(row, text=title_text, width=60)
-            lt.pack(side="left")
-            ls = ttk.Label(row, text="Pending", foreground=STATUS_COLORS["pending"])
-            ls.pack(side="left", padx=8)
-            self.rows[key] = {"title": lt, "status": ls, "frame": row}  # store row frame for auto-scroll
-
-        ttk.Separator(self).pack(fill="x", pady=8)
-        controls = ttk.Frame(self); controls.pack(fill="x")
-        ttk.Button(controls, text="Close", command=self.app.destroy).pack(side="right")
-
-        self.progress = ttk.Progressbar(self, mode="indeterminate"); self.progress.pack(fill="x")
-        self.progress_running = False
-
-    # ---------- Responsive layout ----------
-    def _on_flow_resize(self, _event): self._draw_flow()
-
-    def _layout(self):
-        w = max(self.flow.winfo_width(), 900)
-        h = max(self.flow.winfo_height(), 240)
-
-        # 5 equal columns (equal arrow lengths)
-        margin_x = int(w * 0.04)
-        cols = 5
-        col_space = (w - 2 * margin_x) / cols
-        cx = [int(margin_x + col_space * (i + 0.5)) for i in range(cols)]
-
-        # Rows
-        top_y = int(h * 0.25)
-        mid_y = int(h * 0.50)
-        bottom_y = int(h * 0.75)
-
-        # Larger boxes
-        box_w = int(min(col_space * 0.80, 380))
-        box_h = int(max(h * 0.26, 64))
-
-        return {"cx": cx, "top_y": top_y, "mid_y": mid_y, "bottom_y": bottom_y,
-                "box_w": box_w, "box_h": box_h}
-
-    # ---------- Flow drawing ----------
-    def _draw_node(self, node_key, center_x, center_y, w, h):
-        label = FLOW_LABELS[node_key]
-        x0, y0, x1, y1 = center_x - w//2, center_y - h//2, center_x + w//2, center_y + h//2
-        rect = self.flow.create_rectangle(x0, y0, x1, y1,
-                                          fill=self._FLOW_FILL["pending"],
-                                          outline=self._FLOW_EDGE["pending"], width=2)
-        text = self.flow.create_text(center_x, center_y, text=label,
-                                     font=("Segoe UI", 10), fill="#222", width=w - 24)
-        self._flow_nodes[node_key] = {"rect": rect, "text": text, "bbox": (x0, y0, x1, y1)}
-        return rect
-
-    def _draw_arrow(self, from_node, to_node):
-        fx0, fy0, fx1, fy1 = self._flow_nodes[from_node]["bbox"]
-        tx0, ty0, tx1, ty1 = self._flow_nodes[to_node]["bbox"]
-        start = (fx1, (fy0 + fy1) // 2)
-        end   = (tx0, (ty0 + ty1) // 2)
-
-        # If same column, draw vertical arrow
-        if abs(start[0] - end[0]) < 6:
-            x = (fx1 + tx0) // 2
-            y0 = (fy0 + fy1) // 2
-            y1 = (ty0 + ty1) // 2
-            self.flow.create_line(x, y0 + 6, x, y1 - 6, arrow=tk.LAST, width=2, fill="#888")
-            return
-
-        # elbow route if too close horizontally
-        if start[0] + 16 >= end[0]:
-            midx = max(fx1, tx1) + 30
-            self.flow.create_line(start[0] + 8, start[1], midx, start[1], width=2, fill="#888")
-            self.flow.create_line(midx, start[1], midx, end[1], width=2, fill="#888")
-            self.flow.create_line(midx, end[1], end[0] - 8, end[1], arrow=tk.LAST, width=2, fill="#888")
-        else:
-            self.flow.create_line(start[0] + 8, start[1], end[0] - 8, end[1], arrow=tk.LAST, width=2, fill="#888")
-
-    def _draw_flow(self):
-        self.flow.delete("all")
-        self._flow_nodes.clear()
-
-        L = self._layout()
-        cx, top_y, mid_y, bottom_y = L["cx"], L["top_y"], L["mid_y"], L["bottom_y"]
-        bw, bh = L["box_w"], L["box_h"]
-
-        # Column 0: Clean (middle)
-        self._draw_node("clean", cx[0], mid_y, bw, bh)
-
-        # Column 1: Treat (top), AlayaCare (bottom - same row as Email)
-        self._draw_node("treat_box", cx[1], top_y,    bw, bh)
-        self._draw_node("alayacare", cx[1], bottom_y, bw, bh)
-
-        # Column 2: Downloads (top), Email (bottom)
-        self._draw_node("downloads", cx[2], top_y,    bw, bh)
-        self._draw_node("email",     cx[2], bottom_y, bw, bh)
-
-        # Column 3: Raw Data (middle)
-        self._draw_node("raw",       cx[3], mid_y,    bw, bh)
-
-        # Column 4: Clean Data (middle)
-        self._draw_node("clean_data",cx[4], mid_y,    bw, bh)
-
-        # Arrows
-        self._draw_arrow("clean", "treat_box")
-        self._draw_arrow("clean", "alayacare")
-        self._draw_arrow("treat_box", "downloads")
-        self._draw_arrow("alayacare", "email")
-        self._draw_arrow("downloads", "raw")
-        self._draw_arrow("email", "raw")
-        self._draw_arrow("raw", "clean_data")
-
-        # Re-apply saved node states after redraw and blinking visuals
-        for node_key, state in self._flow_states.items():
-            self._set_node_state(node_key, state)
-            self._apply_blink_visual(node_key)
-
-    # ----- Node coloring & blinking -----
-    def _set_node_state(self, node_key: str, state: str):
-        node = self._flow_nodes.get(node_key)
-        if not node:
-            return
-        self._flow_states[node_key] = state
-        self.flow.itemconfig(
-            node["rect"],
-            fill=self._FLOW_FILL.get(state, self._FLOW_FILL["pending"]),
-            outline=self._FLOW_EDGE.get(state, self._FLOW_EDGE["pending"]),
-            width=2,
-        )
-
-    def _apply_blink_visual(self, node_key: str):
-        """If node is blinking and running, apply the alternating outline."""
-        if node_key not in self._blinking:
-            return
-        if self._flow_states.get(node_key) != "running":
-            return
-        node = self._flow_nodes.get(node_key)
-        if not node:
-            return
-        edge = "#1f6feb" if self._blink_on else "#ffba08"
-        self.flow.itemconfig(node["rect"], outline=edge, width=(3 if self._blink_on else 2))
-
-    def _start_blink(self, node_key: str):
-        self._blinking.add(node_key)
-        self._apply_blink_visual(node_key)
-
-    def _stop_blink(self, node_key: str):
-        if node_key in self._blinking:
-            self._blinking.remove(node_key)
-        # restore standard outline for current state
-        self._set_node_state(node_key, self._flow_states.get(node_key, "pending"))
-
-    def _blink_tick(self):
-        self._blink_on = not self._blink_on
-        for node_key in list(self._blinking):
-            self._apply_blink_visual(node_key)
-        self.after(450, self._blink_tick)
-
-    # ---------- Auto-scroll to running step ----------
     def _auto_scroll_to_step(self, step_key: str):
-        """
-        Center the running step row inside the scrollable viewport.
-        """
-        try:
-            row = self.rows[step_key]["frame"]
-            canvas = self.steps_scroll.canvas
-            inner = self.steps_scroll.inner
+        row = self.step_rows.get(step_key, {}).get("row")
+        if row:
+            self.steps_scroll.ensureWidgetVisible(row, xMargin=0, yMargin=24)
 
-            # ensure geometry is up-to-date
-            self.update_idletasks()
+    def _set_status(self, step_key: str, state: str, text: str | None = None):
+        # row text/color
+        r = self.step_rows.get(step_key)
+        if r:
+            r["status"].setText(text if text is not None else state.capitalize())
+            r["status"].setStyleSheet(f"color:{STATUS_COLORS.get(state, '#666')};")
 
-            row_y = row.winfo_y()                    # y relative to inner frame
-            canvas_h = canvas.winfo_height()
-            inner_h = inner.winfo_height()
-
-            if inner_h <= canvas_h:
-                return  # nothing to scroll
-
-            # target top so the row is roughly centered
-            target_top = max(0, row_y - canvas_h // 2)
-            frac = target_top / float(inner_h - canvas_h)
-            frac = max(0.0, min(1.0, frac))
-            canvas.yview_moveto(frac)
-        except Exception:
-            pass
-
-    # API used by App queue
-    def set_progress(self, on: bool):
-        if on and not self.progress_running:
-            self.progress.start(12); self.progress_running = True
-        elif not on and self.progress_running:
-            self.progress.stop(); self.progress_running = False
-
-    def set_status(self, step_key: str, state: str, text: str | None = None):
-        # update status row
-        if step_key in self.rows:
-            lab = self.rows[step_key]["status"]
-            lab.configure(foreground=STATUS_COLORS[state])
-            lab.configure(text=(text if text is not None else state.capitalize()))
-
-        # auto-scroll when a step starts running
         if state == "running":
-            # defer to end of event loop tick to ensure updated sizes
-            self.after(0, lambda sk=step_key: self._auto_scroll_to_step(sk))
+            self._set_progress(True)
+            self._auto_scroll_to_step(step_key)
 
-        # update all mapped nodes for this step
-        node_keys = STEP_NODE_MAP.get(step_key, [])
-        for node_key in node_keys:
+        # ----- NODES (steady glow) -----
+        for node_key in STEP_NODE_MAP.get(step_key, []):
             if step_key == "alaya" and state == "running":
-                # Special: AlayaCare & Email turn green immediately (no blinking)
-                self._stop_blink(node_key)
-                self._set_node_state(node_key, "done")
-                continue
-
-            if state == "running":
-                self._set_node_state(node_key, "running")
-                self._start_blink(node_key)
+                self.flow.set_node_state(node_key, "done")
             else:
-                self._stop_blink(node_key)
-                self._set_node_state(node_key, state)
+                self.flow.set_node_state(node_key, state)
 
-    def set_run_button_state(self, enabled=True, label="Run"):
-        self.btn_run.configure(state=("normal" if enabled else "disabled"), text=label)
+        # ----- EDGES (steady glow) -----
+        edges = STEP_EDGE_MAP.get(step_key, [])
+        for a, b in edges:
+            self.flow.set_edge_state(a, b, state)
 
-    def reset_status(self):
-        # reset rows
-        for key in self.rows:
-            self.rows[key]["status"].configure(text="Pending", foreground=STATUS_COLORS["pending"])
-        # reset all node colors and blinking
-        for node_key in FLOW_LABELS:
-            self._stop_blink(node_key)
-            self._set_node_state(node_key, "pending")
-        self.set_progress(False)
-
+    # ---- Actions
     def start_pipeline(self):
-        if self.app.running:
-            return
-        self.reset_status()
-        self.app.running = True
-        self.set_run_button_state(enabled=False, label="Running…")
-        threading.Thread(target=run_pipeline, args=(self.app,), daemon=True).start()
+        if self.running: return
+        # reset UI rows
+        for k, r in self.step_rows.items():
+            r["status"].setText("Pending")
+            r["status"].setStyleSheet(f"color:{STATUS_COLORS['pending']};")
 
-class ReportsScreen(ttk.Frame):
-    def __init__(self, parent, app: App):
-        super().__init__(parent)
-        self.app = app
+        # reset nodes
+        for node_key in FLOW_LABELS:
+            self.flow.set_node_state(node_key, "pending")
 
-        header = ttk.Frame(self); header.pack(fill="x")
-        ttk.Button(header, text="← Back to Menu", style="Back.TButton",
-                   command=lambda: app.show("menu")).pack(side="left")
-        ttk.Label(header, text="Reports", style="Title.TLabel").pack(side="left", padx=12)
+        # reset edges
+        for a, b in ALL_EDGES:
+            self.flow.set_edge_state(a, b, "pending")
 
-        body = ttk.Frame(self); body.pack(fill="both", expand=True, pady=(8, 0))
-
-        self.report_vars = {}
-        grid = ttk.Frame(body); grid.pack(fill="x", padx=8, pady=8)
-
-        for i, (key, label, _module) in enumerate(REPORTS):
-            var = tk.BooleanVar(value=False)
-            cb = ttk.Checkbutton(grid, text=label, variable=var)
-            cb.grid(row=i, column=0, sticky="w", padx=4, pady=6)
-            self.report_vars[key] = var
-
-        controls = ttk.Frame(self); controls.pack(fill="x", pady=(8, 0))
-        self.btn_create = ttk.Button(controls, text="Create report(s)", command=self.start_reports)
-        self.btn_create.pack(side="left")
-
-    def set_reports_button_state(self, enabled=True, label="Create report(s)"):
-        self.btn_create.configure(state=("normal" if enabled else "disabled"), text=label)
+        self.running = True
+        self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
+        threading.Thread(target=run_pipeline, args=(self,), daemon=True).start()
 
     def start_reports(self):
-        selected = [(key, label, module)
-                    for (key, label, module) in REPORTS
-                    if self.report_vars.get(key, tk.BooleanVar()).get()]
+        selected = [(key, label, module) for (key, label, module) in REPORTS if self.report_checks[key].isChecked()]
         if not selected:
-            self.app._log("No reports selected."); return
-        self.set_reports_button_state(enabled=False, label="Running…")
-        threading.Thread(target=run_reports, args=(self.app, selected), daemon=True).start()
+            self._log("No reports selected."); return
+        self.btn_run_reports.setEnabled(False); self.btn_run_reports.setText("Running…")
+        threading.Thread(target=run_reports, args=(self, selected), daemon=True).start()
 
-# ============================== Workers ==============================
-def run_pipeline(app: App, stop_on_error: bool = True):
-    # Initialize COM for this worker thread
+# ------------------ Workers (same logic as before) ------------------
+def run_pipeline(win: MainWindow, stop_on_error: bool = True):
     com_inited = False
     try:
         pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
         com_inited = True
     except Exception as e:
-        app.q.put(("log", {"msg": f"Warning: COM init failed (pipeline): {e}"}))
+        win.q.put(("log", {"msg": f"Warning: COM init failed (pipeline): {e}"}))
 
     try:
         for key, title_text, module in STEPS:
             count, plain = _step_parts(title_text)
             start_msg = f"Starting: {plain}"
-            print(start_msg); app.q.put(("log", {"msg": start_msg}))
-            app.q.put(("status", {"key": key, "state": "running", "text": "Running…"}))
+            print(start_msg); win.q.put(("log", {"msg": start_msg}))
+            win.q.put(("status", {"key": key, "state": "running", "text": "Running…"}))
             t0 = time.time()
 
             try:
                 runner = _get_runner(module)
             except Exception:
                 dt = time.time() - t0
-                app.q.put(("status", {"key": key, "state": "fail", "text": f"Failed to import ({dt:.1f}s)"}))
-                app.q.put(("log", {"msg": traceback.format_exc()}))
+                win.q.put(("status", {"key": key, "state": "fail", "text": f"Failed to import ({dt:.1f}s)"}))
+                win.q.put(("log", {"msg": traceback.format_exc()}))
                 if stop_on_error:
-                    app.q.put(("failed_all", {})); return
+                    win.q.put(("failed_all", {})); return
                 continue
 
             try:
                 runner()
                 dt = time.time() - t0
-                app.q.put(("status", {"key": key, "state": "done", "text": f"Done ({dt:.1f}s)"}))
+                win.q.put(("status", {"key": key, "state": "done", "text": f"Done ({dt:.1f}s)"}))
                 finish_msg = (f"[{count}] Finished" if count else "Finished") + f" ({dt:.1f}s)"
-                print(finish_msg); app.q.put(("log", {"msg": finish_msg}))
+                print(finish_msg); win.q.put(("log", {"msg": finish_msg}))
             except Exception:
                 dt = time.time() - t0
-                app.q.put(("status", {"key": key, "state": "fail", "text": f"Failed ({dt:.1f}s)"}))
-                app.q.put(("log", {"msg": traceback.format_exc()}))
+                win.q.put(("status", {"key": key, "state": "fail", "text": f"Failed ({dt:.1f}s)"}))
+                win.q.put(("log", {"msg": traceback.format_exc()}))
                 if stop_on_error:
-                    app.q.put(("failed_all", {})); return
-                # else continue
+                    win.q.put(("failed_all", {})); return
+                # continue
     finally:
         if com_inited:
             try: pythoncom.CoUninitialize()
             except Exception: pass
-        app.q.put(("done_all", {}))
+        win.q.put(("done_all", {}))
 
-def run_reports(app: App, selected_reports: list[tuple[str,str,str]]):
+
+def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
     com_inited = False
     try:
         pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
         com_inited = True
     except Exception as e:
-        app.q.put(("log", {"msg": f"Warning: COM init failed (reports): {e}"}))
+        win.q.put(("log", {"msg": f"Warning: COM init failed (reports): {e}"}))
 
     try:
         for key, label, module in selected_reports:
-            app.q.put(("log", {"msg": f"Starting report: {label}"}))
+            win.q.put(("log", {"msg": f"Starting report: {label}"}))
             t0 = time.time()
             runner = _get_runner(module)
             runner()
             dt = time.time() - t0
-            app.q.put(("log", {"msg": f"Finished report: {label} ({dt:.1f}s)"}))
-        app.q.put(("reports_done", {}))
+            win.q.put(("log", {"msg": f"Finished report: {label} ({dt:.1f}s)"}))
+        win.q.put(("reports_done", {}))
     except Exception:
-        app.q.put(("log", {"msg": traceback.format_exc()}))
-        app.q.put(("reports_failed", {}))
+        win.q.put(("log", {"msg": traceback.format_exc()}))
+        win.q.put(("reports_failed", {}))
     finally:
         if com_inited:
-            try: pythoncom.CoUninitialize()
-            except Exception: pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
-# ============================== Entry ==============================
+# ------------------ Entry ------------------
 def main():
-    ensure_shortcuts()
-    app = App()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
