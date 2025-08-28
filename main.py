@@ -1,8 +1,61 @@
-# main.py (PySide6 version with tabs + responsive flow, no blinking)
+# main.py (PySide6 version with tabs + responsive flow + Setup tab w/ deps installer)
 
-import os, sys, json, time, traceback, importlib, re, threading, queue
+# -*- coding: utf-8 -*-
+# ==== Auto_reports_pulling ====
+# ---- Bootstrap: ensure core packages before heavy imports ----
+import sys, os, subprocess, importlib.util
+
+def _in_venv() -> bool:
+    return (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix) or \
+           (hasattr(sys, "real_prefix") and sys.real_prefix != sys.prefix)
+
+# Map "import name" -> "pip package"
+_BOOTSTRAP_REQUIRED = {
+    "PySide6": "PySide6",
+    "pandas": "pandas",
+    "numpy": "numpy",
+    "openpyxl": "openpyxl",
+    "selenium": "selenium",
+    "webdriver_manager": "webdriver-manager",
+    # pywin32 provides both win32com and pythoncom on Windows
+    **({"pythoncom": "pywin32", "win32com": "pywin32"} if os.name == "nt" else {}),
+}
+
+def _ensure_base_deps():
+    missing = []
+    for import_name, pip_name in _BOOTSTRAP_REQUIRED.items():
+        if importlib.util.find_spec(import_name) is None:
+            missing.append(pip_name)
+
+    if missing:
+        # dedupe while keeping deterministic order
+        to_install = []
+        for p in missing:
+            if p not in to_install:
+                to_install.append(p)
+
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + to_install
+        if not _in_venv():
+            cmd.append("--user")
+
+        print("Installing missing packages:", " ".join(to_install))
+        # Don't capture output so the user sees progress if it takes a while
+        res = subprocess.run(cmd)
+        if res.returncode != 0:
+            print("Some packages failed to install. Exiting.")
+            sys.exit(res.returncode)
+
+        # Re-exec the current process so newly installed modules import cleanly
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+_ensure_base_deps()
+
+
+import os, sys, json, time, traceback, importlib, importlib.util, re, threading, queue, subprocess
+from PySide6.QtWidgets import QSizePolicy
 from pathlib import Path
-
+from typing import Dict, List, Tuple
+import importlib, sys
 # ---- PySide6 / Qt ----
 from PySide6.QtCore import Qt, QTimer, QPointF, QSize
 from PySide6.QtGui import (
@@ -13,11 +66,113 @@ from PySide6.QtWidgets import (
     QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QScrollArea, QFrame,
     QProgressBar, QPlainTextEdit, QGridLayout,
     QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPixmapItem,
-    QGraphicsPathItem, QGraphicsDropShadowEffect
+    QGraphicsPathItem, QGraphicsDropShadowEffect,QComboBox,QCheckBox
 )
 
 # COM (Outlook/Excel) init for worker threads
 import pythoncom
+
+# ===================== Dependency Installer (inline) =====================
+class DependencyInstaller:
+    """Checks & installs third-party deps used by your app (run from Setup tab)."""
+
+    REQUIRED: dict[str, str] = {
+        # Core packages
+        "pandas": "pandas",
+        "numpy": "numpy",
+        "openpyxl": "openpyxl",
+        "pywin32": "pywin32",                  # replaces win32com.client
+        "selenium": "selenium",
+        "webdriver_manager": "webdriver-manager",
+    
+        # Optional but used
+        "glob": "glob2",                       # stdlib glob exists, but pip package is glob2 if needed
+        "typing_extensions": "typing-extensions",  # for Optional, Iterable, etc. (if backport needed)
+    }
+
+    def __init__(self, quiet: bool = True):
+        self.quiet = quiet
+        self._log: List[str] = []
+
+    def ensure(self) -> Dict[str, str]:
+        status: Dict[str, str] = {}
+        missing = self._missing()
+
+        if not missing:
+            for pip_name in set(self.REQUIRED.values()):
+                status[pip_name] = "ok"
+            self._add("All dependencies already satisfied ✅")
+            return status
+
+        self._add("Missing packages detected:")
+        for mod, pip_name in missing:
+            self._add(f"  - {mod}  (pip: {pip_name})")
+
+        targets = sorted({pip for _, pip in missing})
+        ok, failed = self._pip_install(targets)
+
+        # Re-verify after install
+        for import_path, pip_name in self.REQUIRED.items():
+            if pip_name in ok:
+                status[pip_name] = "installed" if self._can_import(import_path) else "failed: import still missing"
+            elif pip_name in failed:
+                status[pip_name] = f"failed: {failed[pip_name]}"
+            else:
+                status[pip_name] = "ok"
+
+        if status.get("pywin32", "").startswith("installed"):
+            self._add("Note: If Outlook/Excel automation fails, restart Python/Windows to finalize pywin32.")
+        return status
+
+    def get_log(self) -> str:
+        return "\n".join(self._log)
+
+    # ---- internals
+    def _missing(self) -> List[Tuple[str, str]]:
+        out: List[Tuple[str, str]] = []
+        for import_path, pip_name in self.REQUIRED.items():
+            if not self._can_import(import_path):
+                out.append((import_path, pip_name))
+        return out
+
+    def _can_import(self, import_path: str) -> bool:
+        return importlib.util.find_spec(import_path) is not None
+
+    def _pip_install(self, pkgs: List[str]) -> Tuple[List[str], Dict[str, str]]:
+        ok: List[str] = []
+        failed: Dict[str, str] = {}
+
+        in_venv = (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix) or \
+                  (hasattr(sys, "real_prefix") and sys.real_prefix != sys.prefix)
+
+        cmd_base = [sys.executable, "-m", "pip", "install", "--upgrade"]
+        if not in_venv:
+            cmd_base.append("--user")
+
+        for pkg in pkgs:
+            cmd = cmd_base + [pkg]
+            try:
+                self._add(f"Installing {pkg} ...")
+                res = subprocess.run(
+                    cmd,
+                    capture_output=self.quiet,
+                    text=True,
+                    check=False
+                )
+                if res.returncode == 0:
+                    ok.append(pkg)
+                    self._add(f"✓ {pkg} installed/updated")
+                else:
+                    reason = (res.stderr or res.stdout or "unknown error").strip().splitlines()[-1]
+                    failed[pkg] = reason
+                    self._add(f"✗ {pkg} failed: {reason}")
+            except Exception as e:
+                failed[pkg] = str(e)
+                self._add(f"✗ {pkg} failed: {e}")
+        return ok, failed
+
+    def _add(self, msg: str):
+        self._log.append(msg)
 
 # ------------------ SIMPLE SETTINGS PERSISTENCE ------------------
 SETTINGS_FILE = Path(__file__).with_name("user_settings.json")
@@ -38,22 +193,28 @@ def _apply_treat_env(username: str, password: str) -> None:
     os.environ["TREAT_USERNAME"] = username
     os.environ["TREAT_PASSWORD"] = password
 
+def _apply_caredove_env(email: str, password: str) -> None:
+    os.environ["CAREDOVE_EMAIL"] = email
+    os.environ["CAREDOVE_PASSWORD"] = password
 # ------------------ PIPELINE STEPS ------------------
 STEPS = [
-    ("clean",  "[1/6] Cleaning Folder",               "Clean_Download_Folder"),
-    ("treat",  "[2/6] Pulling Treat Reports",         "Treat_Pulling"),
-    ("move",   "[3/6] Move Treat files to One-Drive", "Treat_File_Moving"),
-    ("alaya",  "[5/6] Pulling AlayaCare Reports",     "AlayaCare_Pulling"),
-    ("tclean", "[4/6] Cleaning Treat Reports",        "Treat_Data_Cleaning"),
-    ("aclean", "[6/6] AlayaCare Data Cleaning",       "AlayaCare_Data_Cleaning"),
+    ("clean",  "[1/9] Cleaning Folder",               "Auto_reports_pulling.Clean_Download_Folder"),
+    ("treat",  "[2/9] Pulling Treat Reports",         "Auto_reports_pulling.Treat_Pulling"),
+    ("move",   "[3/9] Move Treat files to One-Drive", "Data_Pipeline.Treat_File_Moving"),
+    ("alaya",  "[4/9] Pulling AlayaCare Reports",     "Auto_reports_pulling.AlayaCare_Pulling"),
+    ("caredove","[5/9] Pulling Caredove Reports",      "Auto_reports_pulling.Webfocus_Pulling"),
+    ("cmove", "[6/9] Move Caredove files to One-Drive",    "Data_Pipeline.Caredove_File_Moving"),
+    ("tclean", "[7/9] Cleaning Treat Reports",        "Data_Pipeline.Treat_Data_Cleaning"),
+    ("aclean", "[8/9] AlayaCare Data Cleaning",       "Data_Pipeline.AlayaCare_Data_Cleaning"),
+    ("cclean", "[9/9] Caredove Data Cleaning",       "Data_Pipeline.Caredove_Data_Cleaning")
 ]
 
 # ------------------ REPORTS ------------------
 REPORTS = [
-    ("hhri", "HHRI (Save to Downloads)", "HHRI_Hours"),
-    ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "FAME_Report"),
-    ("jam",  "JAM Report (Save to Downloads)", "JAM_Report"),
-    ("ocan","Overdue OCAN List (Save to Downloads)", "Overdue_OCAN_List")
+    ("hhri", "HHRI (Save to Downloads)", "Reports.HHRI_Hours"),
+    ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "Reports.FAME_Report"),
+    ("jam",  "JAM Report (Save to Downloads)", "Reports.JAM_Report"),
+    ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List")
 ]
 
 STATUS_COLORS = {
@@ -64,36 +225,46 @@ STATUS_COLORS = {
 }
 
 # ---------- Visual labels for the flow nodes (not the row titles) ----------
+# ---------- Visual labels ----------
 FLOW_LABELS = {
-    "clean":        "Clean Folder",
-    "treat_box":    "Treat",
-    "raw":          "Raw Data",
-    "alayacare":    "AlayaCare",
-    "clean_data":   "Clean Data",
-    # keeping these in case you still want them visible
-    "downloads":    "Downloads",
-    "email":        "Email Inbox",
+    "clean": "Clean Folder",
+    "treat_box": "Treat",
+    "raw": "Raw Data",
+    "alayacare": "AlayaCare",
+    "clean_data": "Clean Data",
+    "downloads": "Downloads",
+    "email": "Email Inbox",
+    "caredove": "CareDove",
+    "caredove_dl": "Downloads"   # NEW
 }
 
 # Map pipeline step -> which node(s) should light up
 STEP_NODE_MAP = {
     "clean":  ["clean"],
     "treat":  ["treat_box","downloads"],
-    "move":   ["raw"],
+    "move":   [],
     "alaya":  ["alayacare","email","raw"],
     "tclean": [],
-    "aclean": ["clean_data"],
+    "aclean": [],
+    "caredove":["caredove","caredove_dl"],
+    "cmove":["raw"],
+    "cclean":["clean_data"]
+
 }
 
 # Which edges should change per pipeline step
 STEP_EDGE_MAP = {
-    "clean":  [("clean","treat_box")],
-    "treat":  [("treat_box", "downloads")],
-    "move":   [("downloads", "raw")],
-    "alaya":  [("alayacare", "email"),("email","raw")],
-    "tclean": [],  # stays green when cleaning
-    "aclean": [("raw", "clean_data")],  # same node reused
+    "clean":   [("clean","treat_box")],
+    "treat":   [("treat_box", "downloads")],
+    "move":    [("downloads", "raw")],
+    "cmove":   [("caredove_dl","raw")],
+    "alaya":   [("alayacare", "email"),("email","raw")],
+    "tclean":  [],
+    "aclean":  [("raw", "clean_data")],
+    "caredove":[("caredove","caredove_dl")],
+    "cclean":[("raw", "clean_data")]     # if you want it to flow into raw
 }
+
 
 # All edges in the diagram (used for resetting)
 ALL_EDGES = [
@@ -104,7 +275,6 @@ ALL_EDGES = [
     ("email", "raw"),
     ("raw", "clean_data"),
 ]
-
 
 # ------------------ Helpers ------------------
 def _step_parts(title_text: str):
@@ -124,22 +294,25 @@ def _get_runner(module_name: str):
 # ------------------ Qt FlowView with optional picture nodes ------------------
 class FlowView(QGraphicsView):
     # --- Responsive layout baseline (design-space) ---
-    DESIGN_W = 1800    # your original coordinate width
-    DESIGN_H = 360     # your original coordinate height
+    DESIGN_W = 1800
+    DESIGN_H = 600
 
     DEFAULT_ICON_SIZE = 220
     BASE_ICON_SIZES = {
         "clean": 220, "treat_box": 400, "alayacare": 400,
         "downloads": 180, "email": 180, "raw": 220, "clean_data": 220,
+        "caredove_dl":180,"caredove":500
     }
     BASE_NODE_POS = {
-        "clean": (180, 60),
-        "treat_box": (600, 60),
-        "alayacare": (600, 270),
-        "downloads": (1000, 60),
-        "email":     (1000, 270),
-        "raw": (1350, 160),
-        "clean_data": (1750, 160),
+        "clean": (280, 60),
+        "treat_box": (1000, 60),
+        "alayacare": (1000, 270),
+        "downloads": (1600, 60),
+        "email":     (1600, 270),
+        "raw": (2200, 270),
+        "clean_data": (2800, 270),
+        "caredove" : (950,500),
+        "caredove_dl" : (1600,500)
     }
     SCENE_PADDING = 60  # extra breathing room around everything
 
@@ -147,7 +320,6 @@ class FlowView(QGraphicsView):
         super().__init__(parent)
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
-        # Correct render hints: use QPainter flags, not QPainterPath
         self.setRenderHint(QPainter.Antialiasing, True)
         self.setRenderHint(QPainter.TextAntialiasing, True)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -168,13 +340,11 @@ class FlowView(QGraphicsView):
 
     # ---------- responsive helpers ----------
     def _scale_factor(self) -> float:
-        # Fit the design-space into the current viewport, keep aspect ratio
         vw = max(1, self.viewport().width()  - 2*self.SCENE_PADDING)
         vh = max(1, self.viewport().height() - 2*self.SCENE_PADDING)
         sx = vw / self.DESIGN_W
         sy = vh / self.DESIGN_H
         s = min(sx, sy)
-        # clamp to keep icons readable (tweak as you like)
         return max(0.35, min(s, 2.0))
 
     def _scaled_icon_size(self, key: str, s: float) -> int:
@@ -333,6 +503,8 @@ class FlowView(QGraphicsView):
         self._add_arrow("downloads", "raw")
         self._add_arrow("email", "raw")
         self._add_arrow("raw", "clean_data")
+        self._add_arrow("caredove", "caredove_dl")
+        self._add_arrow("caredove_dl", "raw")
 
         # re-apply saved states (steady glow)
         for k, st in self._states.items():
@@ -346,7 +518,6 @@ class FlowView(QGraphicsView):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # Rebuild after resize; singleShot avoids thrashing while dragging
         QTimer.singleShot(0, self.rebuild)
 
     # ---------- node state (steady glow) ----------
@@ -372,7 +543,35 @@ class FlowView(QGraphicsView):
 
 # ------------------ Main Window ------------------
 class MainWindow(QMainWindow):
-    
+    def _reset_visuals(self):
+        # reset rows
+        for k, r in self.step_rows.items():
+            r["status"].setText("Pending")
+            r["status"].setStyleSheet(f"color:{STATUS_COLORS['pending']};")
+        # reset nodes
+        for node_key in FLOW_LABELS:
+            self.flow.set_node_state(node_key, "pending")
+        # reset edges
+        for a, b in ALL_EDGES:
+            self.flow.set_edge_state(a, b, "pending")
+
+
+    def start_checked_steps(self):
+        if self.running:
+            return
+        # collect the subset in pipeline order
+        subset = [(k,t,m) for (k,t,m) in STEPS if self.step_checks.get(k) and self.step_checks[k].isChecked()]
+        if not subset:
+            self._log("No steps checked."); 
+            return
+
+        self._reset_visuals()
+        self.running = True
+        self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
+        self.btn_run_checked.setEnabled(False); self.btn_run_checked.setText("Running…")
+        threading.Thread(target=run_pipeline, args=(self, subset, True), daemon=True).start()
+
+
     def _toggle_creds(self):
         self.creds_group.setVisible(not self.creds_group.isVisible())
 
@@ -389,6 +588,10 @@ class MainWindow(QMainWindow):
             os.environ["TREAT_USERNAME"] = self.settings["TREAT_USERNAME"]
         if "TREAT_PASSWORD" in self.settings:
             os.environ["TREAT_PASSWORD"] = self.settings["TREAT_PASSWORD"]
+        if "CAREDOVE_EMAIL" in self.settings:
+            os.environ["CAREDOVE_EMAIL"] = self.settings["CAREDOVE_EMAIL"]
+        if "CAREDOVE_PASSWORD" in self.settings:
+            os.environ["CAREDOVE_PASSWORD"] = self.settings["CAREDOVE_PASSWORD"]
 
         # thread queue
         self.q = queue.Queue()
@@ -401,14 +604,16 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)
 
-        # Tabs (Data Automation, Reports)
+        # Tabs (Data Automation, Reports, Setup)
         self.tabs = QTabWidget()
         v.addWidget(self.tabs, 1)
 
         self.tab_auto = QWidget()
         self.tab_rep  = QWidget()
+        self.tab_setup = QWidget()
         self.tabs.addTab(self.tab_auto, "Data Automation")
         self.tabs.addTab(self.tab_rep, "Reports")
+        self.tabs.addTab(self.tab_setup, "Setup")
 
         # ---- Data Automation tab ----
         auto_layout = QVBoxLayout(self.tab_auto)
@@ -416,37 +621,63 @@ class MainWindow(QMainWindow):
 
         # Header with Run
         hdr = QHBoxLayout()
+
         back_lbl = QLabel("Data Automation")
         back_lbl.setStyleSheet("font-size:18px; font-weight:600;")
         hdr.addWidget(back_lbl)
         hdr.addStretch(1)
 
+        self.btn_run_checked = QPushButton("Run checked")
+        self.btn_run_checked.clicked.connect(self.start_checked_steps)
+        hdr.addWidget(self.btn_run_checked)
+
         self.btn_run = QPushButton("Run")
         self.btn_run.clicked.connect(self.start_pipeline)
         hdr.addWidget(self.btn_run)
 
-        # 🔽 Add your toggle button here
+        # 🔽 Toggle Treat credentials
         self.btn_toggle_creds = QPushButton("Update Credentials")
         self.btn_toggle_creds.clicked.connect(self._toggle_creds)
         hdr.addWidget(self.btn_toggle_creds)
 
         auto_layout.addLayout(hdr)
 
-        # Treat creds (keep a handle so we can toggle visibility)
-        self.creds_group = QGroupBox("Treat credentials")
-        gl = QGridLayout(self.creds_group); gl.setColumnStretch(1, 1); gl.setColumnStretch(3, 1)
+        # Credentials (Treat + Caredove) - toggled by the button
+        self.creds_group = QGroupBox("Credentials")
+        gl = QGridLayout(self.creds_group)
+        gl.setColumnStretch(1, 1)
+        gl.setColumnStretch(3, 1)
+
+        # --- Treat ---
+        treat_title = QLabel("<b>Treat</b>")
+        gl.addWidget(treat_title, 0, 0, 1, 5)
+
         self.in_user = QLineEdit(os.getenv("TREAT_USERNAME", self.settings.get("TREAT_USERNAME", "yxu")))
         self.in_pass = QLineEdit(os.getenv("TREAT_PASSWORD", self.settings.get("TREAT_PASSWORD", "")))
         self.in_pass.setEchoMode(QLineEdit.Password)
-        gl.addWidget(QLabel("Username"), 0, 0); gl.addWidget(self.in_user, 0, 1)
-        gl.addWidget(QLabel("Password"), 0, 2); gl.addWidget(self.in_pass, 0, 3)
+
+        gl.addWidget(QLabel("Username"), 1, 0); gl.addWidget(self.in_user, 1, 1)
+        gl.addWidget(QLabel("Password"), 1, 2); gl.addWidget(self.in_pass, 1, 3)
+
+
+
+        # --- Caredove ---
+        caredove_title = QLabel("<b>Caredove</b>")
+        gl.addWidget(caredove_title, 3, 0, 1, 5)
+
+        self.cd_email = QLineEdit(os.getenv("CAREDOVE_EMAIL", self.settings.get("CAREDOVE_EMAIL", "")))
+        self.cd_pass  = QLineEdit(os.getenv("CAREDOVE_PASSWORD", self.settings.get("CAREDOVE_PASSWORD", "")))
+        self.cd_pass.setEchoMode(QLineEdit.Password)
+
+        gl.addWidget(QLabel("Email"),    4, 0); gl.addWidget(self.cd_email, 4, 1)
+        gl.addWidget(QLabel("Password"), 4, 2); gl.addWidget(self.cd_pass,  4, 3)
+
+        # Save button (saves both Treat and Caredove)
         self.btn_save_creds = QPushButton("Save")
         self.btn_save_creds.clicked.connect(self._save_creds)
-        gl.addWidget(self.btn_save_creds, 0, 4)
+        gl.addWidget(self.btn_save_creds, 5, 4)
 
-        # Start hidden; the toggle button will reveal this
         self.creds_group.setVisible(False)
-
         auto_layout.addWidget(self.creds_group)
 
 
@@ -455,22 +686,61 @@ class MainWindow(QMainWindow):
         auto_layout.addWidget(self.flow)
 
         # Scrollable steps list
+        # ---------- Scrollable steps list (drop-in replacement) ----------
         steps_group = QGroupBox("Pipeline steps")
         steps_v = QVBoxLayout(steps_group)
-        self.steps_scroll = QScrollArea(); self.steps_scroll.setWidgetResizable(True)
-        steps_widget = QWidget(); self.steps_scroll.setWidget(steps_widget)
+
+        self.steps_scroll = QScrollArea()
+        self.steps_scroll.setWidgetResizable(True)
+
+        steps_widget = QWidget()
+        self.steps_scroll.setWidget(steps_widget)
+
+        # Create the layout BEFORE using it anywhere
         self.steps_layout = QVBoxLayout(steps_widget)
-        self.steps_layout.setContentsMargins(8, 8, 8, 8); self.steps_layout.setSpacing(4)
+        self.steps_layout.setContentsMargins(8, 8, 8, 8)
+        self.steps_layout.setSpacing(4)
+
+        # keep rows + add per-step checkboxes
         self.step_rows = {}
-        for key, title_text, _ in STEPS:
-            row = QWidget(); hl = QHBoxLayout(row); hl.setContentsMargins(0,0,0,0)
-            lbl = QLabel(title_text); lbl.setMinimumWidth(600)
-            st  = QLabel("Pending"); st.setStyleSheet(f"color:{STATUS_COLORS['pending']};")
-            hl.addWidget(lbl, 1); hl.addWidget(st, 0)
+        self.step_checks = {}  # key -> QCheckBox
+
+        for key, title_text, module in STEPS:
+            row = QWidget()
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(8)
+
+            # per-step checkbox
+            cb = QCheckBox()
+            cb.setObjectName(f"cb_{key}")
+            self.step_checks[key] = cb
+            hl.addWidget(cb, 0)
+
+            # label + status
+            lbl = QLabel(title_text)
+            lbl.setMinimumWidth(600)
+            lbl.setToolTip(module)  # shows the module path on hover
+
+            st = QLabel("Pending")
+            st.setStyleSheet(f"color:{STATUS_COLORS['pending']};")
+
+            hl.addWidget(lbl, 1)
+            hl.addStretch(1)
+            hl.addWidget(st, 0)
+
             self.steps_layout.addWidget(row)
-            self.step_rows[key] = {"row": row, "label": lbl, "status": st}
+            self.step_rows[key] = {"row": row, "label": lbl, "status": st, "checkbox": cb}
+
+        # push items to top
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.steps_layout.addWidget(spacer)
+
         steps_v.addWidget(self.steps_scroll)
         auto_layout.addWidget(steps_group)
+
+
 
         # Controls
         ctl = QHBoxLayout()
@@ -494,6 +764,20 @@ class MainWindow(QMainWindow):
         rep_layout.addWidget(self.btn_run_reports)
         rep_layout.addStretch(1)
 
+        # ---- Setup tab ----
+        setup_layout = QVBoxLayout(self.tab_setup)
+        setup_layout.setSpacing(8)
+        setup_layout.addWidget(QLabel("<b>Environment Setup</b>"))
+
+        self.btn_install_deps = QPushButton("Check & Install Libraries")
+        self.btn_install_deps.clicked.connect(self.start_deps_check)
+        setup_layout.addWidget(self.btn_install_deps)
+
+        self.setup_log = QPlainTextEdit()
+        self.setup_log.setReadOnly(True)
+        self.setup_log.setMaximumBlockCount(5000)
+        setup_layout.addWidget(self.setup_log, 1)
+
         # ---- Shared log at the bottom ----
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -507,19 +791,37 @@ class MainWindow(QMainWindow):
 
     # ---- creds
     def _save_creds(self):
+        # Treat
         u = self.in_user.text().strip()
         p = self.in_pass.text()
+    
+        # Caredove
+        cd_email = self.cd_email.text().strip()
+        cd_pass  = self.cd_pass.text()
+    
+        # Apply to env immediately
         _apply_treat_env(u, p)
+        _apply_caredove_env(cd_email, cd_pass)
+    
+        # Persist
         s = dict(_load_settings())
-        s["TREAT_USERNAME"] = u
-        s["TREAT_PASSWORD"] = p
+        s["TREAT_USERNAME"]    = u
+        s["TREAT_PASSWORD"]    = p
+        s["CAREDOVE_EMAIL"]    = cd_email
+        s["CAREDOVE_PASSWORD"] = cd_pass
         _save_settings(s)
-        self._log("Saved Treat credentials (env updated).")
+    
+        self._log("Saved Treat & Caredove credentials (env updated).")
 
-    # ---- logging / queue
+
+    # ---- logging
     def _log(self, msg: str):
         self.log.appendPlainText(msg.rstrip())
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+
+    def _log_setup(self, msg: str):
+        self.setup_log.appendPlainText(msg.rstrip())
+        self.setup_log.verticalScrollBar().setValue(self.setup_log.verticalScrollBar().maximum())
 
     def _drain_queue(self):
         try:
@@ -534,17 +836,28 @@ class MainWindow(QMainWindow):
                     self._log("All steps completed.")
                     self.running = False
                     self.btn_run.setEnabled(True); self.btn_run.setText("Run")
+                    self.btn_run_checked.setEnabled(True); self.btn_run_checked.setText("Run checked")
+
                 elif typ == "failed_all":
                     self._set_progress(False)
                     self._log("Pipeline stopped due to failure.")
                     self.running = False
                     self.btn_run.setEnabled(True); self.btn_run.setText("Run")
+                    self.btn_run_checked.setEnabled(True); self.btn_run_checked.setText("Run checked")
                 elif typ == "reports_done":
                     self._log("Report job(s) completed.")
                     self.btn_run_reports.setEnabled(True); self.btn_run_reports.setText("Create report(s)")
                 elif typ == "reports_failed":
                     self._log("Report job(s) stopped due to failure.")
                     self.btn_run_reports.setEnabled(True); self.btn_run_reports.setText("Create report(s)")
+                elif typ == "deps_log":
+                    self._log_setup(payload["msg"])
+                elif typ == "deps_done":
+                    self.btn_install_deps.setEnabled(True); self.btn_install_deps.setText("Check & Install Libraries")
+                    self._log_setup("Dependency check finished.")
+                elif typ == "deps_failed":
+                    self.btn_install_deps.setEnabled(True); self.btn_install_deps.setText("Check & Install Libraries")
+                    self._log_setup("Dependency check stopped due to failure.")
         except queue.Empty:
             pass
 
@@ -576,29 +889,35 @@ class MainWindow(QMainWindow):
                 self.flow.set_node_state(node_key, state)
 
         # ----- EDGES (steady glow) -----
-        edges = STEP_EDGE_MAP.get(step_key, [])
-        for a, b in edges:
-            self.flow.set_edge_state(a, b, state)
+        for a, b in STEP_EDGE_MAP.get(step_key, []):
+            # Only upgrade state, don’t downgrade
+            prev_state = next((e["state"] for e in self.flow._edges if e["from"] == a and e["to"] == b), "pending")
+            if prev_state != "done" or state == "fail":
+                self.flow.set_edge_state(a, b, state)
+
 
     # ---- Actions
-    def start_pipeline(self):
-        if self.running: return
+    # inside MainWindow
+    def _reset_visuals(self):
         # reset UI rows
         for k, r in self.step_rows.items():
             r["status"].setText("Pending")
             r["status"].setStyleSheet(f"color:{STATUS_COLORS['pending']};")
-
         # reset nodes
         for node_key in FLOW_LABELS:
             self.flow.set_node_state(node_key, "pending")
-
         # reset edges
         for a, b in ALL_EDGES:
             self.flow.set_edge_state(a, b, "pending")
 
+    def start_pipeline(self):
+        if self.running: return
+        self._reset_visuals()
         self.running = True
         self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
+        # runs all steps because steps=None by default
         threading.Thread(target=run_pipeline, args=(self,), daemon=True).start()
+
 
     def start_reports(self):
         selected = [(key, label, module) for (key, label, module) in REPORTS if self.report_checks[key].isChecked()]
@@ -607,8 +926,17 @@ class MainWindow(QMainWindow):
         self.btn_run_reports.setEnabled(False); self.btn_run_reports.setText("Running…")
         threading.Thread(target=run_reports, args=(self, selected), daemon=True).start()
 
-# ------------------ Workers (same logic as before) ------------------
-def run_pipeline(win: MainWindow, stop_on_error: bool = True):
+    def start_deps_check(self):
+        self.btn_install_deps.setEnabled(False)
+        self.btn_install_deps.setText("Running…")
+        self.setup_log.clear()
+        threading.Thread(target=run_deps_check, args=(self,), daemon=True).start()
+
+# ------------------ Workers ------------------
+def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = None, stop_on_error: bool = True):
+    if steps is None:
+        steps = STEPS  # default: all
+
     com_inited = False
     try:
         pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
@@ -617,7 +945,7 @@ def run_pipeline(win: MainWindow, stop_on_error: bool = True):
         win.q.put(("log", {"msg": f"Warning: COM init failed (pipeline): {e}"}))
 
     try:
-        for key, title_text, module in STEPS:
+        for key, title_text, module in steps:
             count, plain = _step_parts(title_text)
             start_msg = f"Starting: {plain}"
             print(start_msg); win.q.put(("log", {"msg": start_msg}))
@@ -646,13 +974,11 @@ def run_pipeline(win: MainWindow, stop_on_error: bool = True):
                 win.q.put(("log", {"msg": traceback.format_exc()}))
                 if stop_on_error:
                     win.q.put(("failed_all", {})); return
-                # continue
     finally:
         if com_inited:
             try: pythoncom.CoUninitialize()
             except Exception: pass
         win.q.put(("done_all", {}))
-
 
 def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
     com_inited = False
@@ -680,6 +1006,28 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
                 pythoncom.CoUninitialize()
             except Exception:
                 pass
+
+def run_deps_check(win: MainWindow):
+    try:
+        win.q.put(("deps_log", {"msg": "Starting dependency check..."}))
+        installer = DependencyInstaller(quiet=True)
+        status = installer.ensure()
+        log = installer.get_log()
+        if log.strip():
+            win.q.put(("deps_log", {"msg": log}))
+
+        lines = ["", "Status summary:"]
+        for pkg, st in status.items():
+            lines.append(f"  {pkg:10s} -> {st}")
+        win.q.put(("deps_log", {"msg": "\n".join(lines)}))
+
+        problems = [k for k, v in status.items() if v.startswith("failed")]
+        if problems:
+            win.q.put(("deps_log", {"msg": "\nSome packages failed to install:\n- " + "\n- ".join(f"{p}: {status[p]}" for p in problems)}))
+        win.q.put(("deps_done", {}))
+    except Exception:
+        win.q.put(("deps_log", {"msg": traceback.format_exc()}))
+        win.q.put(("deps_failed", {}))
 
 # ------------------ Entry ------------------
 def main():

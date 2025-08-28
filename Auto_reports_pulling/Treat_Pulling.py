@@ -120,7 +120,7 @@ def build_driver():
 
     return driver
 
-driver = build_driver()
+driver = None
 
 def bypass_ssl_interstitial(max_wait=6):
     """Bypass Chrome's SSL warning (Advanced→Proceed or 'thisisunsafe')."""
@@ -836,6 +836,8 @@ def run_tile_via_context_menu(tile_label: str, timeout: int = 25, max_depth: int
 
 # ===================== MAIN FLOW =====================
 def run():
+    global driver
+    driver = build_driver()
     try_login(max_retries=3)
     open_synthesis_page()
 
@@ -847,7 +849,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-#
+##
     # --- Report 8B (Census) ---
     print("Running report 8B (Census)...")
     find_report("report8B")
@@ -857,7 +859,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-#
+##
     # --- Report 30B ---
     print("Running report 30B...")
     find_report("report30B")
@@ -867,7 +869,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-#
+##
     # --- Report 41B ---
     print("Running report 41B...")
     find_report("report41B")
@@ -876,7 +878,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-#
+##
     # --- Report 17B (MIS - Statistics) ---
     print("Running report 17B (MIS - Statistics)...")
     find_report("report17B")
@@ -886,18 +888,18 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-#
+##
     # --- Report 31B New Referrals---
     print("Running report 31B (Referral Reports New Referrals)...")
     find_report("report31B")
     set_dates()
     choose_all_programs()
     click_generate()
-#
+##
     # Go to page 2 and click the New Referrals total (fragment=120iT2)
     click_next_page_in_viewer()
     click_total_by_fragment(fragment=NEW_REFERRALS_FRAGMENT, wait_secs=2, timeout=25)
-#
+##
     # Export the drillthrough page that opens
     download_csv_from_viewer()
     back_to_synthesis_home()
@@ -920,20 +922,20 @@ def run():
     print("Running WebFOCUS tiles in sequence...")
     # Define the exact tiles to run (edit this list as needed)
     webfocus_tiles = ["Assessments", "External Documents", "Demographics_Active Clients"]
-
+#
     for idx, tile_label in enumerate(webfocus_tiles):
         # Open the report hub
         find_report("report40B")
         click_generate_external()
         click_generate_external_in_buttons_container(timeout=25)
-
+#
         # Optionally double-click to open the tile's folder first (uncomment if needed)
         # try_double_click_tile(tile_label, max_retries=3)
-
+#
         # Run the specific tile via context menu
         print(f"Running tile: {tile_label}")
         run_tile_via_context_menu(tile_label, timeout=25)
-
+#
         # Export whatever viewer opened to CSV
         if not export_csv_any_viewer():
             print(f"[{tile_label}] Could not find an Export→CSV control automatically.")
@@ -943,15 +945,15 @@ def run():
                 print(f"[{tile_label}] Downloaded: {downloaded_path}")
             except Exception as e:
                 print(f"[{tile_label}] No download detected: {e}")
-
+#
         # After each run (except maybe after the last), go back home to re-enter report40B
         if idx < len(webfocus_tiles) - 1:
             back_to_synthesis_home()
             time.sleep(1)
-
+#
 if __name__ == "__main__":
     try:
         run()
     finally:
-        time.sleep(2)
+        time.sleep(5)
         driver.quit()
