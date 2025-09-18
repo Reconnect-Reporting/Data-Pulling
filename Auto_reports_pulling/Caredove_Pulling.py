@@ -21,11 +21,8 @@ URL_LOGIN = "https://www.caredove.com/user/account"
 URL_REPORTS_MAIN = "https://www.caredove.com/organization/reports/orgid/3866"  # Reconnect Health Services
 URL_REPORTS_WEST = "https://www.caredove.com/organization/reports/orgid/3851"  # West Community Connect Hub
 
-EMAIL = os.getenv("CAREDOVE_EMAIL", "").strip()
-PASSWORD = os.getenv("CAREDOVE_PASSWORD", "")
-
-if not EMAIL or not PASSWORD:
-    raise RuntimeError("Caredove credentials missing. Set CAREDOVE_EMAIL and CAREDOVE_PASSWORD in environment.")
+EMAIL = "yxu@reconnect.on.ca"
+PASSWORD = "Jiazhuo2018#"
 
 DOWNLOAD_DIR = str(Path.home() / "Downloads" / "caredove")
 DOWNLOAD_TIMEOUT = 120  # seconds

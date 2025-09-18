@@ -4,6 +4,12 @@
 # ==== Auto_reports_pulling ====
 # ---- Bootstrap: ensure core packages before heavy imports ----
 import sys, os, subprocess, importlib.util
+from PySide6.QtWidgets import QTableView, QHeaderView
+from PySide6.QtCore import QAbstractTableModel, QModelIndex
+import pandas as pd
+import io
+from contextlib import redirect_stdout, redirect_stderr
+
 
 def _in_venv() -> bool:
     return (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix) or \
@@ -202,7 +208,7 @@ STEPS = [
     ("treat",  "[2/9] Pulling Treat Reports",         "Auto_reports_pulling.Treat_Pulling"),
     ("move",   "[3/9] Move Treat files to One-Drive", "Data_Pipeline.Treat_File_Moving"),
     ("alaya",  "[4/9] Pulling AlayaCare Reports",     "Auto_reports_pulling.AlayaCare_Pulling"),
-    ("caredove","[5/9] Pulling Caredove Reports",      "Auto_reports_pulling.Webfocus_Pulling"),
+    ("caredove","[5/9] Pulling Caredove Reports",      "Auto_reports_pulling.Caredove_Pulling"),
     ("cmove", "[6/9] Move Caredove files to One-Drive",    "Data_Pipeline.Caredove_File_Moving"),
     ("tclean", "[7/9] Cleaning Treat Reports",        "Data_Pipeline.Treat_Data_Cleaning"),
     ("aclean", "[8/9] AlayaCare Data Cleaning",       "Data_Pipeline.AlayaCare_Data_Cleaning"),
@@ -214,7 +220,11 @@ REPORTS = [
     ("hhri", "HHRI (Save to Downloads)", "Reports.HHRI_Hours"),
     ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "Reports.FAME_Report"),
     ("jam",  "JAM Report (Save to Downloads)", "Reports.JAM_Report"),
-    ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List")
+    ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List"),
+    ("cwcd","CWCD (show in Output Table)", "Reports.CWCD"),
+    ("uhn",  "UHN Geri Psych (show in Output Table)", "Reports.UHN_GeriPsych"),
+    ("ohrs", "OHRS_MHA (show in Output Table)", "Reports.OHRS_MHA")  # adjust module path to your file
+
 ]
 
 STATUS_COLORS = {
@@ -541,6 +551,37 @@ class FlowView(QGraphicsView):
     def set_node_state(self, key, state):
         self._apply_state(key, state)
 
+
+
+
+class PandasModel(QAbstractTableModel):
+    def __init__(self, df: pd.DataFrame, parent=None):
+        super().__init__(parent)
+        self._df = df.copy()
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._df)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._df.columns)
+
+    def data(self, index, role):
+        if not index.isValid() or role not in (Qt.DisplayRole, Qt.EditRole):
+            return None
+        val = self._df.iat[index.row(), index.column()]
+        # nice display for floats/ints
+        if isinstance(val, float):
+            return f"{val:.0f}" if val.is_integer() else f"{val:.2f}"
+        return str(val)
+        
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role != Qt.DisplayRole:
+            return None
+        if orientation == Qt.Horizontal:
+            return str(self._df.columns[section])
+        else:
+            return str(self._df.index[section])
+
 # ------------------ Main Window ------------------
 class MainWindow(QMainWindow):
     def _reset_visuals(self):
@@ -570,6 +611,22 @@ class MainWindow(QMainWindow):
         self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
         self.btn_run_checked.setEnabled(False); self.btn_run_checked.setText("Running…")
         threading.Thread(target=run_pipeline, args=(self, subset, True), daemon=True).start()
+    
+    def _show_dataframe(self, df: pd.DataFrame):
+        self.out_table.setModel(PandasModel(df))
+        # Jump to the Output tab so the user sees the result immediately
+        if hasattr(self, "tab_out"):
+            self.tabs.setCurrentWidget(self.tab_out)
+
+    
+    def preview_cwcd_pivot(self):
+        try:
+            import Reports.CWCD as cwcd
+            df = cwcd.run()  # uses your existing transformation
+            self._show_dataframe(df)
+            self._log("CWCD pivot built and rendered in Output Table.")
+        except Exception as e:
+            self._log(f"Error building CWCD pivot: {e}")
 
 
     def _toggle_creds(self):
@@ -604,16 +661,19 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)
 
-        # Tabs (Data Automation, Reports, Setup)
         self.tabs = QTabWidget()
         v.addWidget(self.tabs, 1)
 
-        self.tab_auto = QWidget()
-        self.tab_rep  = QWidget()
+        self.tab_auto  = QWidget()
+        self.tab_rep   = QWidget()
+        self.tab_out   = QWidget()   # NEW: Output tab
         self.tab_setup = QWidget()
-        self.tabs.addTab(self.tab_auto, "Data Automation")
-        self.tabs.addTab(self.tab_rep, "Reports")
+
+        self.tabs.addTab(self.tab_auto,  "Data Automation")
+        self.tabs.addTab(self.tab_rep,   "Reports")
+        self.tabs.addTab(self.tab_out,   "Output")   # NEW
         self.tabs.addTab(self.tab_setup, "Setup")
+
 
         # ---- Data Automation tab ----
         auto_layout = QVBoxLayout(self.tab_auto)
@@ -748,10 +808,34 @@ class MainWindow(QMainWindow):
         ctl.addWidget(self.progress); ctl.addStretch(1)
         auto_layout.addLayout(ctl)
 
+
         # ---- Reports tab ----
         rep_layout = QVBoxLayout(self.tab_rep)
         rep_layout.setSpacing(8)
         rep_layout.addWidget(QLabel("<b>Reports</b>"))
+
+        # ---- Output tab (full-bleed table) ----
+        out_layout = QVBoxLayout(self.tab_out)
+        out_layout.setContentsMargins(0, 0, 0, 0)   # no padding
+        out_layout.setSpacing(0)
+        
+        self.out_table = QTableView(self.tab_out)
+        self.out_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.out_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.out_table.horizontalHeader().setStretchLastSection(True)
+        self.out_table.verticalHeader().setVisible(False)
+        self.out_table.setSortingEnabled(True)
+        self.out_table.setAlternatingRowColors(True)
+        self.out_table.setSelectionBehavior(QTableView.SelectRows)
+        self.out_table.setSelectionMode(QTableView.SingleSelection)
+        self.out_table.setWordWrap(False)
+        self.out_table.setCornerButtonEnabled(False)
+        
+        out_layout.addWidget(self.out_table)
+
+
+
+
 
         self.report_checks = {}
         for key, label, _ in REPORTS:
@@ -980,32 +1064,41 @@ def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = Non
             except Exception: pass
         win.q.put(("done_all", {}))
 
+# --- QUIET reports: only a single success/fail line per report ---
 def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
     com_inited = False
     try:
-        pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
-        com_inited = True
-    except Exception as e:
-        win.q.put(("log", {"msg": f"Warning: COM init failed (reports): {e}"}))
+        try:
+            pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+            com_inited = True
+        except Exception as e:
+            # Keep this as a single-line warning (quiet)
+            win.q.put(("log", {"msg": f"COM init warning: {e}"}))
 
-    try:
         for key, label, module in selected_reports:
-            win.q.put(("log", {"msg": f"Starting report: {label}"}))
-            t0 = time.time()
-            runner = _get_runner(module)
-            runner()
-            dt = time.time() - t0
-            win.q.put(("log", {"msg": f"Finished report: {label} ({dt:.1f}s)"}))
+            try:
+                runner = _get_runner(module)
+                result = runner()  # let the module do its thing quietly
+
+                # If it returns a DataFrame, show it in the Output Table
+                if isinstance(result, pd.DataFrame):
+                    win._show_dataframe(result)
+
+                # ONE LINE ONLY ✅
+                win.q.put(("log", {"msg": f"{label} — successfully generated."}))
+            except Exception as e:
+                # ONE LINE ONLY ❌
+                win.q.put(("log", {"msg": f"{label} — failed: {e}"}))
+                win.q.put(("reports_failed", {}))
+                return
+
         win.q.put(("reports_done", {}))
-    except Exception:
-        win.q.put(("log", {"msg": traceback.format_exc()}))
-        win.q.put(("reports_failed", {}))
     finally:
         if com_inited:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+            try: pythoncom.CoUninitialize()
+            except Exception: pass
+
+
 
 def run_deps_check(win: MainWindow):
     try:

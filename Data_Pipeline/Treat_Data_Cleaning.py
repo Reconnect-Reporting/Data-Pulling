@@ -183,6 +183,7 @@ def _rpt_progstafffinance_transform(header: List[str], rows: List[List[str]]) ->
 def _rpt_mis_stats_transform(header: List[str], rows: List[List[str]]) -> Tuple[List[str], List[List[str]]]:
     # Final mapping
     name_map = {
+        "textbox1":"Category",
         "textbox55": "Program",
         "textbox24": "FCC",
         "textbox21": "MIS Code",
@@ -211,12 +212,13 @@ def _rpt_mis_stats_transform(header: List[str], rows: List[List[str]]) -> Tuple[
 
     # Keep only these columns, in this order
     target = [
+        "Category",
         "Program", "FCC", "MIS Code", "Description",
         "Apr", "May", "June", "Q1",
         "July", "Aug", "Sep", "Q2",
         "Oct", "Nov", "Dec", "Q3",
         "Jan", "Feb", "Mar", "Apr_2",
-        "Q4",
+        "Q4","Total"
     ]
 
     hmap = _case_index(header)  # lowercased header -> index
@@ -225,6 +227,38 @@ def _rpt_mis_stats_transform(header: List[str], rows: List[List[str]]) -> Tuple[
 
     rows = _project_rows(rows, keep_idxs)
     header = final_header
+    return header, rows
+
+def _reconnectworkproofingbyclinician_transform(header: List[str], rows: List[List[str]]) -> Tuple[List[str], List[List[str]]]:
+    # Base mapping (no spaces)
+    base_map = {
+        "textbox121": "Staff",
+        "textbox5":   "Date",
+        "textbox6":   "Face-to-Face Home Visit",
+        "textbox7":   "Face-toFace Community",
+        "textbox24":  "Face-to-Face Office",
+        "textbox30":  "Telephone/Text",
+        "textbox36":  "Email/Letter/Fax",
+        "textbox42":  "Video Conference",
+        "textbox48":  "Total",
+        "textbox54":  "Unidentified Client Visits",
+        "textbox69":  "Group sessions",
+        "textbox75":  "Direct Care",
+        "textbox81":  "Indirect Care",
+        "textbox87":  "Non Clinical",
+        "textbox93":  "Total2",
+        "textbox105": "Total Hours",
+        "textbox99":  "Clinical Percentage",
+    }
+
+    # Also accept "textbox 6" (with a space) variants
+    mapping_ci = base_map.copy()
+    for k, v in list(base_map.items()):
+        if k.startswith("textbox") and " " not in k:
+            mapping_ci[f"textbox {k[7:]}"] = v  # e.g., textbox6 -> "textbox 6"
+
+    # Apply case-insensitive rename
+    header = _rename_header_ci(header, mapping_ci)
     return header, rows
 
 
@@ -280,6 +314,202 @@ def _rename_mrn_to_id_df(df: pd.DataFrame) -> pd.DataFrame:
     ren = {c: "ID" for c in df.columns if isinstance(c, str) and c.strip().lower() == "mrn"}
     return df.rename(columns=ren) if ren else df
 
+def _apply_demographics_codebook(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add human-readable *_LABEL columns for the Demographics file.
+    Keeps original numeric codes intact.
+    """
+
+    # ---------- mapping dicts ----------
+    official_language_map = {
+        1: "English",
+        2: "French",
+        3: "Neither",
+        4: "Prefer not to answer",
+    }
+
+    residence_type_map = {
+        0:  "Supportive living",
+        9:  "Supportive living",
+        1:  "Lives in own home",
+        2:  "Rented Accomodation",
+        3:  "Boarding House",
+        5:  "Homeless",
+        6:  "Group Living",
+        7:  "Sheltered Housing",
+        10: "Hospital",
+        12: "Other",
+        13: "Do not know",
+    }
+
+    highest_edu_map = {
+        1: "Primary school started but not finished",
+        2: "Received elementary school education",
+        3: "Educated to secondary school level",
+        4: "Educated to junior high school level",
+        5: "Educated to senior high school level",
+        6: "Educated to high school level",
+        7: "Received education at technical college",
+        8: "Received graduate education",
+        9: "Received postgraduate education",
+        10: "Received higher education college education",
+        11: "Received university education",
+        12: "Attending university",
+        13: "Education interrupted",
+        14: "No formal education",
+        15: "Other",
+        16: "Unknown",
+        17: "Asked But Declined",
+    }
+
+    employment_status_map = {
+        1:  "Self-employed",
+        2:  "Income support",
+        3:  "Permanently unable to work (medical)",
+        4:  "In paid employment",
+        5:  "In paid casual work",
+        6:  "Does voluntary work",
+        7:  "Not in labor force",
+        8:  "Retired",
+        9:  "In sheltered work",
+        10: "Employment retraining",
+        11: "Unemployed",
+        12: "Other",
+        13: "Asked But Declined",
+        14: "Unknown",
+    }
+
+    income_source_map = {
+        1:  "Disability Assistance (Insurance)",
+        2:  "Employment",
+        3:  "Employment Insurance",
+        4:  "Family",
+        5:  "No source of income",
+        6:  "ODSP (Ontario Disability Support Program)",
+        7:  "Other Insurance (excl. EI)",
+        8:  "Pension (Retirement Income)",
+        9:  "Social assistance (Ontario Works)",
+        10: "Prefer not to answer",
+        11: "Other Income Sources",
+        12: "Do not know",
+    }
+
+    born_in_canada_map = {
+        1: "Yes",
+        2: "No",
+        3: "Asked But Declined",
+        4: "Asked But Unknown",
+    }
+
+    sexual_identity_map = {
+        -1: "Do not know",
+        6:  "Do not know",
+        8:  "Do not know",
+        9:  "Do not know",
+        10: "Asked but declined",
+        1:  "Heterosexual",
+        4:  "Heterosexual",
+        7:  "Heterosexual",
+        2:  "Bisexual",
+        3:  "Gay",
+        5:  "Lesbian",
+    }
+
+    def map_total_income(series: pd.Series) -> pd.Series:
+        """
+        Map numeric income codes (1–9) to text ranges.
+        Blanks/NaN stay blank; unmatched become 'Unknown'.
+        """
+        mapping = {
+            1: "$0 - $14,999",
+            2: "$20,000 - $29,999",
+            3: "$30,000 - $59,999",
+            4: "$60,000 - $89,999",
+            5: "$90,000 - $119,999",
+            6: "$120,000 - $149,999",
+            7: "$150,000 or more",
+            8: "Prefer not to answer",
+            9: "Do not know / Unknown",
+        }
+
+        # ensure numeric (in case your column is string)
+        s = pd.to_numeric(series, errors="coerce")
+        return s.map(mapping).fillna("")
+
+    # ---------- helpers ----------
+    import re
+    def _norm(s: str) -> str:
+        return re.sub(r"[\W_]+", "", s or "").lower()
+
+    def _find_col(df: pd.DataFrame, aliases: list[str]) -> Optional[str]:
+        """Find a column by alias list (handles spacing/underscore/casing and abbreviated headers)."""
+        norm_map = {_norm(c): c for c in df.columns}
+        for a in aliases:
+            na = _norm(a)
+            if na in norm_map:
+                return norm_map[na]
+        # allow partial matches (e.g., 'RESIDENC' in screenshot)
+        for na, orig in norm_map.items():
+            for a in aliases:
+                key = _norm(a)
+                if na.startswith(key) or key.startswith(na):
+                    return orig
+        return None
+
+    # --- helper: map codes -> labels, but preserve blanks ---
+    def _to_label(series: pd.Series, mapping: dict, default="Unknown", preserve_blank=True) -> pd.Series:
+        raw = series.astype(str)
+        is_blank = raw.str.strip().eq("") | series.isna()      # blanks/NaN stay blank
+
+        snum = pd.to_numeric(series, errors="coerce")
+        out = snum.map(mapping)                                # mapped labels
+        if preserve_blank:
+            out = out.where(~is_blank, "")                     # keep blanks empty, not "Unknown"
+        out = out.fillna(default)                              # non-blank unmapped -> default
+        return out
+
+    # --- overwrite these columns IN-PLACE (no *_LABEL columns) ---
+    col = _find_col(df, ["OFFICIALLANGUAGE", "OFFICIAL LANGUAGE", "OFFICIAL_LANG", "LANGUAGE"])
+    if col:
+        df[col] = _to_label(df[col], official_language_map, default="Unknown")
+
+    col = _find_col(df, ["RESIDENCETYPE", "RESIDENCE TYPE", "RESIDENCE", "RESIDENC"])
+    if col:
+        df[col] = _to_label(df[col], residence_type_map, default="Unknown")
+
+    col = _find_col(df, ["HIGHESTEDUCATIONLEVEL", "HIGHEST EDUCATION LEVEL", "EDUCATIONLEVEL"])
+    if col:
+        df[col] = _to_label(df[col], highest_edu_map, default="Unknown")
+
+    col = _find_col(df, ["EMPLOYMENTSTATUS", "EMPLOYMENT STATUS", "EMPLOYM", "EMPLOYMENT"])
+    if col:
+        df[col] = _to_label(df[col], employment_status_map, default="Unknown")
+
+    col = _find_col(df, ["INCOMESOURCE", "INCOME SOURCE", "INCOMES"])
+    if col:
+        df[col] = _to_label(df[col], income_source_map, default="Unknown")
+
+    # Born in Canada: keep the labeled column you wanted (R name)
+    col = _find_col(df, ["BORNINCANADA", "BORN IN CANADA", "BornInCanada"])
+    if col:
+        df[col] = _to_label(df[col], born_in_canada_map, default="Unknown")
+
+    # TOTALINCOME text -> ordered code (new column)
+    col = _find_col(df, ["TOTALINCOME", "TOTAL INCOME", "IncomeDist", "INCOME DIST", "INCOME RANGE"])
+    if col:
+        df[col] = map_total_income(df[col])
+        # If you prefer to overwrite the original column instead:
+        # df[col] = _map_total_income_to_order(df[col])
+    # --- apply sexual identity mapping (in place) ---
+    col = _find_col(df, [
+        "SEXUALIDENTITY"
+    ])
+    if col:
+        df[col] = _to_label(df[col], sexual_identity_map, default="Do not know")
+
+    
+    return df
+
 def _filldown_all_df(df: pd.DataFrame) -> pd.DataFrame:
     return df.ffill()
 
@@ -287,7 +517,7 @@ def _export_df_to_csv(df: pd.DataFrame, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(dest, index=False, encoding="utf-8-sig", lineterminator="\n")
 
-def process_excel(prefix: str, *, dest_name: str, needles=("MRN",), filldown: bool = False) -> Optional[Path]:
+def process_excel(prefix: str, *, dest_name: str, needles=("MRN",), filldown: bool = False, postprocess: Optional[callable] = None) -> Optional[Path]:
     """Find newest Excel file by prefix, do headerize + (optional) filldown + MRN→ID, write CSV to Clean."""
     src_folder = raw_dir()
     dst_folder = clean_dir()
@@ -303,6 +533,9 @@ def process_excel(prefix: str, *, dest_name: str, needles=("MRN",), filldown: bo
         if filldown:
             df = _filldown_all_df(df)
         df = _rename_mrn_to_id_df(df)
+        if postprocess:
+            df = postprocess(df)
+
         out = dst_folder / dest_name
         _export_df_to_csv(df, out)
         print(f"[OK] {p.name} -> {out.name} (Excel rows={len(df_raw)}, header row={hdr})")
@@ -363,18 +596,23 @@ def run():
 
     # ---- Existing CSV flows ----
     process_file("ADTCensusCAN", ["NewAdmissionstoOrg"], per_file_transform=_adtcensuscan_transform)
-    process_file("RECONNECTWORKProofingByClinician", ["textbox121"])
+    process_file(
+    "RECONNECTWORKProofingByClinician",
+    ["textbox121"],
+    per_file_transform=_reconnectworkproofingbyclinician_transform
+)
+
     process_file("rpt_Census", ["AddtionalAddressType","AdditionalAddressType"], per_file_transform=_rpt_census_transform)
     process_file("rpt_MIS_Stats", ["textbox1"], per_file_transform=_rpt_mis_stats_transform)
     process_file("rpt_ProgStaffFinance", ["textbox55"], per_file_transform=_rpt_progstafffinance_transform)
 
     # rpt_Referrals_DT_waitlisted (save as fixed name)
-    for stem in ["rpt_Referrals_DT (1)", "rpt_Referrals_DT_waitlisted"]:
+    for stem in ["rpt_Referrals_Waitlisted", "rpt_Referrals_DT_waitlisted"]:
         if _find_src_by_stem(raw, stem):
             process_file(stem, ["Textbox1"], dest_name_override="rpt_Referrals_DT_waitlisted.csv")
             break
     else:
-        print("[INFO] No 'rpt_Referrals_DT (1)' or 'rpt_Referrals_DT_waitlisted' found in Raw.")
+        print("[INFO] No 'rpt_Referrals_Waitlisted' or 'rpt_Referrals_DT_waitlisted' found in Raw.")
 
     process_file("rpt_Referrals_DT", ["Textbox1"])
 
@@ -383,7 +621,14 @@ def run():
     process_excel("Assessment", dest_name="Assessment.csv", needles=("MRN",), filldown=True)
 
     # Demographics: MRN→ID only
-    process_excel("Demographics", dest_name="Demographics.csv", needles=("MRN",), filldown=False)
+    process_excel(
+    "Demographics",
+    dest_name="Demographics.csv",
+    needles=("MRN",),
+    filldown=False,
+    postprocess=_apply_demographics_codebook
+)
+
 
     # External_Documents_Report: filldown all columns, MRN→ID
     process_excel("External_Documents_Report", dest_name="External_Documents_Report.csv", needles=("MRN",), filldown=True)

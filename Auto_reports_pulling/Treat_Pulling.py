@@ -37,7 +37,7 @@ if not _download.exists():
             _download = Path(d) / "Downloads"
             break
 
-DOWNLOAD_DIR = str(_download)
+DOWNLOAD_DIR = _download
 
 # Prefer env vars; falls back to literals if not set
 USERNAME = os.getenv("TREAT_USERNAME", "yxu")
@@ -97,11 +97,12 @@ def build_driver():
 
     # Auto-download without prompts
     prefs = {
-        "download.default_directory": DOWNLOAD_DIR,
+        "download.default_directory": str(DOWNLOAD_DIR),  # <-- cast to str here
         "download.prompt_for_download": False,
         "safebrowsing.enabled": True,
         "profile.default_content_setting_values.automatic_downloads": 1,
     }
+
     opts.add_experimental_option("prefs", prefs)
 
     # Silence chromedriver itself
@@ -173,14 +174,119 @@ def login():
     driver.get(LOGIN_URL)
     bypass_ssl_interstitial()
 
-    wait_present(By.ID, "orgUserID").send_keys(ORG_ID)
-    wait_clickable(By.ID, "btnContinue").click()
+    # --- Step 1: If the org ID page is shown, submit it and continue
+    try:
+        org_box = WebDriverWait(driver, 4).until(
+            EC.presence_of_element_located((By.ID, "orgUserID"))
+        )
+        org_box.clear()
+        org_box.send_keys(ORG_ID)
+        WebDriverWait(driver, 4).until(
+            EC.element_to_be_clickable((By.ID, "btnContinue"))
+        ).click()
+        # small wait for redirect
+        WebDriverWait(driver, 10).until(EC.any_of(
+            EC.presence_of_element_located((By.ID, "username")),
+            EC.presence_of_element_located((By.CSS_SELECTOR, "iframe")),
+            EC.url_changes(LOGIN_URL)
+        ))
+    except TimeoutException:
+        # No org page; proceed (some tenants skip this step)
+        pass
 
-    wait_present(By.ID, "username").send_keys(USERNAME)
-    wait_present(By.ID, "password").send_keys(PASSWORD)
-    wait_clickable(By.ID, "btnLogOn").click()
+    # --- Step 2: Find the username field even if it's inside an iframe
+    # Try at top level first
+    user_el = None
+    pass_el = None
+    try:
+        user_el = WebDriverWait(driver, 3).until(
+            EC.presence_of_element_located((By.ID, "username"))
+        )
+    except TimeoutException:
+        # Hunt across nested frames
+        if not switch_into_frame_containing("#username", by=By.CSS_SELECTOR, timeout=20, max_depth=10):
+            # Extra fallback: look by placeholder text
+            if not switch_into_frame_containing("input[placeholder*='User']", by=By.CSS_SELECTOR, timeout=10, max_depth=10):
+                raise RuntimeError("Could not locate the username field (#username) on the login page.")
 
-    handle_active_session_dialog()
+        # We are now inside the frame that contains the field
+        user_el = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "#username, input[placeholder*='User']"))
+        )
+
+    # --- Step 3: Find password (same frame as username)
+    try:
+        pass_el = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "#password, input[type='password']"))
+        )
+    except TimeoutException:
+        raise RuntimeError("Found username but not the password field (#password).")
+
+    # --- Step 4: Type credentials (with robust fallbacks)
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", user_el)
+    except Exception:
+        pass
+    time.sleep(0.05)
+
+    try:
+        user_el.clear(); user_el.send_keys(USERNAME)
+    except Exception:
+        # Fallback: set via JS (handles weird masks/overlays)
+        driver.execute_script("arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", user_el, USERNAME)
+
+    try:
+        pass_el.clear(); pass_el.send_keys(PASSWORD)
+    except Exception:
+        driver.execute_script("arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", pass_el, PASSWORD)
+
+    # --- Step 5: Click Log On (several selector options)
+    # Look for common button ids/labels
+    login_btn = None
+    selectors = [
+        (By.ID, "btnLogOn"),
+        (By.CSS_SELECTOR, "button#btnLogOn, input#btnLogOn"),
+        (By.XPATH, "//button[normalize-space()='Log On' or normalize-space()='Log in' or normalize-space()='Sign in']"),
+        (By.XPATH, "//input[@type='submit' and (translate(@value,'LOGIN','login')='log on' or translate(@value,'LOGIN','login')='log in' or translate(@value,'SIGN IN','sign in')='sign in')]"),
+    ]
+    for by, sel in selectors:
+        try:
+            login_btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((by, sel)))
+            break
+        except TimeoutException:
+            continue
+    if not login_btn:
+        # Last resort: the first visible submit button in the same form
+        try:
+            login_btn = WebDriverWait(driver, 4).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "form button[type='submit'], form input[type='submit']"))
+            )
+        except TimeoutException:
+            raise RuntimeError("Login button not found on the credential form.")
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", login_btn)
+        time.sleep(0.05)
+        login_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", login_btn)
+
+    # --- Step 6: Leave the frame and wait for post-login UI
+    driver.switch_to.default_content()
+    # Wait for either the top nav or reports link to appear, or URL to change
+    try:
+        WebDriverWait(driver, 20).until(EC.any_of(
+            EC.url_contains("/treat/app"),
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".nav-item.dropdown .nav-link.dropdown-toggle")),
+            EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'newReports')]"))
+        ))
+    except TimeoutException:
+        # Print some diagnostics to help troubleshoot further
+        print("[DEBUG] After clicking Log On:")
+        print("  URL:", driver.current_url)
+        print("  Title:", driver.title)
+        raise
+
 
 def handle_active_session_dialog():
     try:
@@ -424,6 +530,54 @@ def _switch_into_frame_with_xpath_visible(xpath_expr: str, timeout: int = 20, ma
             return True
         time.sleep(0.25)
     return False
+
+def _snapshot(dirpath: Path) -> set[str]:
+    return set(os.listdir(dirpath))
+
+def _wait_for_new_file(dirpath: Path, before: set[str], suffix=".csv", timeout=60) -> Path:
+    """Wait until a new, fully-downloaded file appears; return its Path."""
+    end = time.time() + timeout
+    while time.time() < end:
+        # ignore temp/in-progress files (Chrome .crdownload / Edge .tmp)
+        candidates = [
+            f for f in os.listdir(dirpath)
+            if f.endswith(suffix) and not f.endswith(".crdownload") and not f.endswith(".tmp")
+        ]
+        new_files = [f for f in candidates if f not in before]
+        if new_files:
+            # pick the newest by mtime in case multiple show up
+            newest = max(new_files, key=lambda fn: (dirpath / fn).stat().st_mtime)
+            return dirpath / newest
+        time.sleep(0.25)
+    raise TimeoutError("No new download detected.")
+
+
+def _safe_rename(src: Path, dst: Path, add_timestamp_if_exists: bool = False) -> Path:
+    src = Path(src)
+    dst = Path(dst)
+
+    # If source and target are the same file/path, nothing to do
+    try:
+        if src.resolve(strict=True) == dst.resolve(strict=False):
+            # Optionally ensure it exists; if not, fall through
+            if dst.exists():
+                return dst
+    except FileNotFoundError:
+        # src missing; let the normal error be raised below
+        pass
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    if dst.exists():
+        if add_timestamp_if_exists:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dst = dst.with_name(f"{dst.stem}_{stamp}{dst.suffix}")
+        else:
+            dst.unlink()
+
+    src.replace(dst)
+    return dst
+
 
 def click_generate_external(timeout: int = 20):
     """
@@ -849,7 +1003,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-##
+###
     # --- Report 8B (Census) ---
     print("Running report 8B (Census)...")
     find_report("report8B")
@@ -859,7 +1013,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-##
+###
     # --- Report 30B ---
     print("Running report 30B...")
     find_report("report30B")
@@ -869,7 +1023,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-##
+###
     # --- Report 41B ---
     print("Running report 41B...")
     find_report("report41B")
@@ -878,7 +1032,7 @@ def run():
     download_csv_from_viewer()
     back_to_synthesis_home()
     time.sleep(1)
-##
+###
     # --- Report 17B (MIS - Statistics) ---
     print("Running report 17B (MIS - Statistics)...")
     find_report("report17B")
@@ -895,16 +1049,19 @@ def run():
     set_dates()
     choose_all_programs()
     click_generate()
-##
-    # Go to page 2 and click the New Referrals total (fragment=120iT2)
+    
+    # Page 2 -> click total
     click_next_page_in_viewer()
     click_total_by_fragment(fragment=NEW_REFERRALS_FRAGMENT, wait_secs=2, timeout=25)
-##
-    # Export the drillthrough page that opens
+    
+    # Export and rename to rpt_Referrals_New
+    before = _snapshot(DOWNLOAD_DIR)
     download_csv_from_viewer()
+    first_path = _wait_for_new_file(DOWNLOAD_DIR, before, suffix=".csv", timeout=120)
+    _ = _safe_rename(first_path, DOWNLOAD_DIR / "rpt_Referrals_DT.csv",add_timestamp_if_exists=False)
     back_to_synthesis_home()
     time.sleep(1)
-#
+    
     # --- 31B — Is Waitlisted total ---
     print("Running report 31B (Census) — Is Waitlisted...")
     find_report("report31B")
@@ -914,7 +1071,12 @@ def run():
     click_next_page_in_viewer()
     WAITLISTED_FRAGMENT = "132iT2"
     click_total_by_fragment(fragment=WAITLISTED_FRAGMENT, wait_secs=2, timeout=25)
+    
+    # Export and rename to rpt_Referrals_Waitlisted
+    before = _snapshot(DOWNLOAD_DIR)
     download_csv_from_viewer()
+    second_path = _wait_for_new_file(DOWNLOAD_DIR, before, suffix=".csv", timeout=120)
+    final_path = _safe_rename(second_path, DOWNLOAD_DIR / "rpt_Referrals_Waitlisted.csv")
     back_to_synthesis_home()
     time.sleep(1)
 

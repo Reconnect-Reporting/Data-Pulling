@@ -5,12 +5,22 @@ import pandas as pd
 import win32com.client as win32
 
 # ---- Fixed CSV input path ----
-ONE_DRIVE = Path(
-    os.environ.get("OneDriveCommercial")
-    or os.environ.get("OneDrive")
-    or (Path.home() / "OneDrive - Reconnect Community Health Services (1)")
-)
+# ---- Fixed CSV input path ----
+from pathlib import Path
+
+# Force the OneDrive path with (1)
+ONE_DRIVE = Path.home() / "OneDrive - Reconnect Community Health Services (1)"
+
+# Build the input path
 INPUT_PATH = ONE_DRIVE / "data" / "Clean Data" / "AlayaCare" / "HHRI(VHA).csv"
+
+# Optional: fail fast if file not found
+if not INPUT_PATH.exists():
+    raise FileNotFoundError(f"Could not find file at: {INPUT_PATH}")
+
+print("Resolved INPUT_PATH:", INPUT_PATH)
+
+
 
 # ---- Output (local Downloads) ----
 DOWNLOADS = Path.home() / "Downloads"

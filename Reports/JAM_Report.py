@@ -8,11 +8,7 @@ from pathlib import Path
 import shutil
 
 # ================== PATHS ==================
-ONE_DRIVE = Path(
-    os.environ.get("OneDriveCommercial")
-    or os.environ.get("OneDrive")
-    or (Path.home() / "OneDrive - Reconnect Community Health Services (1)")
-)
+ONE_DRIVE = Path.home() / "OneDrive - Reconnect Community Health Services (1)"
 
 CLEAN_DIR = str(ONE_DRIVE / "data" / "Clean Data" / "Treat")
 MIS_STATS_CSV = os.path.join(CLEAN_DIR, "rpt_MIS_Stats.csv")
@@ -142,7 +138,7 @@ def build_cumulative_rows(row_f2f_monthly, row_nonf2f_monthly, fy_end_cap):
     return row_f2f_cum, row_nonf2f_cum, last_month_name
 
 def fill_template_and_save(row_clients_cum, row_f2f_cum, row_nonf2f_cum, fy_end_cap):
-    TEMPLATE_DIR  = str(ONE_DRIVE / "data" / "Report Templates")
+    TEMPLATE_DIR  = str(ONE_DRIVE / "data" / "Templates")
     TEMPLATE_BASE = os.path.join(TEMPLATE_DIR, "JAM Report Template")  # .xlsx/.xlsm/.xls
 
     template_path = None
