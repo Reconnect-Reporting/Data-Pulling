@@ -13,9 +13,11 @@ import re
 import pandas as pd
 from pathlib import Path
 from typing import Dict, Tuple
+import os
 
 # ================== CONFIG ==================
-FOLDER = Path(r"C:\Users\yxu\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\AlayaCare")
+user = os.environ.get("UserName") or os.environ.get("USERNAME") or os.getlogin()
+FOLDER = Path(r"C:\Users\=\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\AlayaCare".replace("=", user))
 
 # ================== HELPERS ==================
 def _find_csv(base_name: str) -> Path:

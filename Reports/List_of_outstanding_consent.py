@@ -9,8 +9,10 @@ import pandas as pd
 # =========================
 #         DEFAULT PATHS
 # =========================
-DEFAULT_TREAT_DIR = Path(r"C:\Users\yxu\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\Treat")
-DEFAULT_ALAYA_DIR = Path(r"C:\Users\yxu\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\AlayaCare")
+user = os.environ.get("UserName") or os.environ.get("USERNAME") or os.getlogin()
+
+DEFAULT_TREAT_DIR = Path(r"C:\Users\=\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\Treat".replace("=", user))
+DEFAULT_ALAYA_DIR = Path(r"C:\Users\=\OneDrive - Reconnect Community Health Services (1)\data\Clean Data\AlayaCare".replace("=", user))
 
 
 # =========================

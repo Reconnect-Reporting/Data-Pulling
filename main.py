@@ -242,7 +242,8 @@ REPORTS = [
     ("vhs", "VHA (show in Output Table)", "Reports.VHA","monthly"),
     ("geri hub", "Geri Hub Report (show in Output Table)", "Reports.Geri_Hub_Report","monthly"),
     ("ipc", "IPC Report (show in Output Table)", "Reports.IPC_Report","monthly"),
-    ("coss", "COSS Report (show in Output Table)", "Reports.COSS_Report","monthly")
+    ("coss", "COSS Report (show in Output Table)", "Reports.COSS_Report","monthly"),
+    ("trapeze", "Trapeze Report (Save to Downloads)", "Reports.Trapeze_Report","weekly")
 ]
 
 STATUS_COLORS = {
@@ -959,7 +960,16 @@ class MainWindow(QMainWindow):
         # ---- Reports tab ----
         rep_layout = QVBoxLayout(self.tab_rep)
         rep_layout.setSpacing(8)
-        rep_layout.addWidget(QLabel("<b>Reports</b>"))
+        
+        # Header row: title (left) + Create report(s) (right)
+        rep_hdr = QHBoxLayout()
+        rep_title = QLabel("<b>Reports</b>")
+        rep_hdr.addWidget(rep_title)
+        rep_hdr.addStretch(1)
+        self.btn_run_reports = QPushButton("Create report(s)")
+        self.btn_run_reports.clicked.connect(self.start_reports)
+        rep_hdr.addWidget(self.btn_run_reports)
+        rep_layout.addLayout(rep_hdr)
         
         # Split the page vertically into Daily / Weekly / Monthly
         splitter = QSplitter(Qt.Vertical, self.tab_rep)
@@ -984,7 +994,6 @@ class MainWindow(QMainWindow):
             v.addWidget(container, 1)
         
             checks_in_section = []
-            # REPORTS is now (key, label, module, cadence)
             for key, label, module, cadence in REPORTS:
                 if cadence != cadence_key:
                     continue
@@ -995,7 +1004,6 @@ class MainWindow(QMainWindow):
                 self.report_checks[key] = cb
                 checks_in_section.append(cb)
         
-            # Select-all behavior for this section
             def toggle_all(state):
                 on = state == Qt.Checked
                 for c in checks_in_section:
@@ -1017,11 +1025,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 1)
-        
-        # Run button at the bottom (ONE instance)
-        self.btn_run_reports = QPushButton("Create report(s)")
-        self.btn_run_reports.clicked.connect(self.start_reports)
-        rep_layout.addWidget(self.btn_run_reports)
+
 
 
         # ---- Shared log at the bottom ----
