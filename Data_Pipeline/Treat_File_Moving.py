@@ -183,7 +183,7 @@ def move_special_reports(
 def run(
     patterns = ("*.csv", "rpt_*"),
     recursive: bool = False,
-    special_prefixes: tuple[str, ...] = ("Assessments", "Demographics", "External_Documents_Report"),
+    special_prefixes: tuple[str, ...] = ("Assessments", "Demographics", "External_Documents_Report","Notes_Test"),
 ):
     """
     Entry point:

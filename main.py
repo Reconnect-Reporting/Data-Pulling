@@ -72,7 +72,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QScrollArea, QFrame,
     QProgressBar, QPlainTextEdit, QGridLayout,
     QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPixmapItem,
-    QGraphicsPathItem, QGraphicsDropShadowEffect,QComboBox,QCheckBox
+    QGraphicsPathItem, QGraphicsDropShadowEffect,QComboBox,QCheckBox,QSplitter
 )
 
 # COM (Outlook/Excel) init for worker threads
@@ -202,29 +202,47 @@ def _apply_treat_env(username: str, password: str) -> None:
 def _apply_caredove_env(email: str, password: str) -> None:
     os.environ["CAREDOVE_EMAIL"] = email
     os.environ["CAREDOVE_PASSWORD"] = password
+
+def _apply_trapeze_env(username: str, password: str) -> None:
+    os.environ["TRAPEZE_USERNAME"] = username
+    os.environ["TRAPEZE_PASSWORD"] = password
+
 # ------------------ PIPELINE STEPS ------------------
 STEPS = [
-    ("clean",  "[1/9] Cleaning Folder",               "Auto_reports_pulling.Clean_Download_Folder"),
-    ("treat",  "[2/9] Pulling Treat Reports",         "Auto_reports_pulling.Treat_Pulling"),
-    ("move",   "[3/9] Move Treat files to One-Drive", "Data_Pipeline.Treat_File_Moving"),
-    ("alaya",  "[4/9] Pulling AlayaCare Reports",     "Auto_reports_pulling.AlayaCare_Pulling"),
-    ("caredove","[5/9] Pulling Caredove Reports",      "Auto_reports_pulling.Caredove_Pulling"),
-    ("cmove", "[6/9] Move Caredove files to One-Drive",    "Data_Pipeline.Caredove_File_Moving"),
-    ("tclean", "[7/9] Cleaning Treat Reports",        "Data_Pipeline.Treat_Data_Cleaning"),
-    ("aclean", "[8/9] AlayaCare Data Cleaning",       "Data_Pipeline.AlayaCare_Data_Cleaning"),
-    ("cclean", "[9/9] Caredove Data Cleaning",       "Data_Pipeline.Caredove_Data_Cleaning")
+    ("clean",  "[1/11] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
+    ("treat",  "[2/11] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
+    ("move",   "[3/11] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
+    ("alaya",  "[4/11] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),
+    ("caredove","[5/11] Pulling Caredove Reports",         "Auto_reports_pulling.Caredove_Pulling"),
+    ("trapeze","[6/11] Pulling Trapeze Reports",           "Auto_reports_pulling.Trapeze_Report_Pulling"),
+    ("cmove",  "[7/11] Moving Caredove Files to OneDrive", "Data_Pipeline.Caredove_File_Moving"),
+    ("tclean", "[8/11] Cleaning Treat Data",               "Data_Pipeline.Treat_Data_Cleaning"),
+    ("aclean", "[9/11] Cleaning AlayaCare Data",           "Data_Pipeline.AlayaCare_Data_Cleaning"),
+    ("cclean", "[10/11] Cleaning Caredove Data",           "Data_Pipeline.Caredove_Data_Cleaning"),
+    ("report_dashboard","[11/11] Refreshing Dashboards", [
+        "Reports.OHRS_MHA",
+        "Reports.OHRS_SFS",
+        "Reports.Client_enroll_in_multiple_programs"
+    ])
 ]
 
 # ------------------ REPORTS ------------------
 REPORTS = [
-    ("hhri", "HHRI (Save to Downloads)", "Reports.HHRI_Hours"),
-    ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "Reports.FAME_Report"),
-    ("jam",  "JAM Report (Save to Downloads)", "Reports.JAM_Report"),
-    ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List"),
-    ("cwcd","CWCD (show in Output Table)", "Reports.CWCD"),
-    ("uhn",  "UHN Geri Psych (show in Output Table)", "Reports.UHN_GeriPsych"),
-    ("ohrs", "OHRS_MHA (show in Output Table)", "Reports.OHRS_MHA")  # adjust module path to your file
-
+    ("hhri", "HHRI (Save to Downloads)", "Reports.HHRI_Hours","weekly"),
+    ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "Reports.FAME_Report","monthly"),
+    ("jam",  "JAM Report (Save to Downloads)", "Reports.JAM_Report","monthly"),
+    ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List","monthly"),
+    ("cwcd","CWCD (show in Output Table)", "Reports.CWCD","monthly"),
+    ("uhn",  "UHN Geri Psych (show in Output Table)", "Reports.UHN_GeriPsych","monthly"),
+    ("rass",  "RASS (show in Output Table)", "Reports.RASS","monthly"),
+    ("ohrs", "OHRS_MHA (show in Output Table and Refresh Dashboard)", "Reports.OHRS_MHA","daily"),
+    ("ohrs_sfs", "OHRS_SFS (show in Output Table and Refresh Dashboard)", "Reports.OHRS_SFS","daily"),
+    ("consent_missing", "List of Outstanding consents (Save to Downloads)", "Reports.List_of_outstanding_consent","monthly"),
+    ("client_in_multiple_programs","Client Enroll in Multiple Programs (show in Output Table and Refresh Dashboard)","Reports.Client_enroll_in_multiple_programs","daily"),
+    ("vhs", "VHA (show in Output Table)", "Reports.VHA","monthly"),
+    ("geri hub", "Geri Hub Report (show in Output Table)", "Reports.Geri_Hub_Report","monthly"),
+    ("ipc", "IPC Report (show in Output Table)", "Reports.IPC_Report","monthly"),
+    ("coss", "COSS Report (show in Output Table)", "Reports.COSS_Report","monthly")
 ]
 
 STATUS_COLORS = {
@@ -235,7 +253,6 @@ STATUS_COLORS = {
 }
 
 # ---------- Visual labels for the flow nodes (not the row titles) ----------
-# ---------- Visual labels ----------
 FLOW_LABELS = {
     "clean": "Clean Folder",
     "treat_box": "Treat",
@@ -245,8 +262,13 @@ FLOW_LABELS = {
     "downloads": "Downloads",
     "email": "Email Inbox",
     "caredove": "CareDove",
-    "caredove_dl": "Downloads"   # NEW
+    "caredove_dl": "Downloads",
+    "Trapeze": "Trapeze",        # <-- use 'Trapeze' consistently
+    "trapeze_dl": "Downloads",
+    "PowerBI": "Power BI",
+    "reports": "Reports ready",
 }
+
 
 # Map pipeline step -> which node(s) should light up
 STEP_NODE_MAP = {
@@ -258,32 +280,50 @@ STEP_NODE_MAP = {
     "aclean": [],
     "caredove":["caredove","caredove_dl"],
     "cmove":["raw"],
-    "cclean":["clean_data"]
+    "cclean":["clean_data"],
+    "trapeze": ["Trapeze", "trapeze_dl"], 
+    "report_dashboard": ["PowerBI", "reports"],
 
 }
 
 # Which edges should change per pipeline step
 STEP_EDGE_MAP = {
-    "clean":   [("clean","treat_box")],
-    "treat":   [("treat_box", "downloads")],
-    "move":    [("downloads", "raw")],
-    "cmove":   [("caredove_dl","raw")],
-    "alaya":   [("alayacare", "email"),("email","raw")],
-    "tclean":  [],
-    "aclean":  [("raw", "clean_data")],
-    "caredove":[("caredove","caredove_dl")],
-    "cclean":[("raw", "clean_data")]     # if you want it to flow into raw
-}
+    # after CLEAN finishes, light up all four outgoing edges from 'clean'
+    "clean":  [("clean","treat_box"),
+               ("clean","alayacare"),
+               ("clean","caredove"),
+               ("clean","Trapeze")],
 
+    "treat":  [("treat_box", "downloads")],
+    "move":   [("downloads", "raw")],
+    "alaya":  [("alayacare", "email"), ("email","raw")],
+    "tclean": [],
+    "aclean": [("raw", "clean_data")],
+    "caredove":[("caredove","caredove_dl")],
+    "cmove":  [("caredove_dl","raw")],
+    "cclean":[("raw", "clean_data")],
+    # keep node key consistent: use 'Trapeze' everywhere
+    "trapeze": [("Trapeze","trapeze_dl"), ("trapeze_dl","raw")],
+    "report_dashboard": [("clean_data","PowerBI"), ("clean_data","reports")]
+}
 
 # All edges in the diagram (used for resetting)
 ALL_EDGES = [
-    ("clean", "treat_box"),
-    ("treat_box", "downloads"),
+    ("clean","treat_box"),
+    ("clean","alayacare"),
+    ("clean","caredove"),
+    ("clean","Trapeze"),
+    ("treat_box","downloads"),
     ("downloads","raw"),
     ("alayacare","email"),
-    ("email", "raw"),
-    ("raw", "clean_data"),
+    ("email","raw"),
+    ("raw","clean_data"),
+    ("caredove","caredove_dl"),
+    ("caredove_dl","raw"),
+    ("Trapeze","trapeze_dl"),
+    ("trapeze_dl","raw"),
+    ("clean_data","PowerBI"),
+    ("clean_data","reports"),
 ]
 
 # ------------------ Helpers ------------------
@@ -291,40 +331,71 @@ def _step_parts(title_text: str):
     m = re.match(r"^\[(\d+/\d+)\]\s*(.+)$", title_text.strip())
     return (m.group(1), m.group(2)) if m else (None, title_text)
 
-def _get_runner(module_name: str):
-    # reload so modules re-read env vars each step
-    if module_name in sys.modules:
-        mod = importlib.reload(sys.modules[module_name])
-    else:
-        mod = importlib.import_module(module_name)
-    if hasattr(mod, "run") and callable(mod.run):  return mod.run
-    if hasattr(mod, "main") and callable(mod.main): return mod.main
-    raise AttributeError(f"{module_name} has no callable run() or main().")
+def _get_runner(module_spec):
+    """
+    Accepts either:
+      - str: 'pkg.module' that exposes run() or main()
+      - list/tuple[str]: several modules; returns a wrapper that runs each in order
+    """
+    def _import_runner(modname: str):
+        if modname in sys.modules:
+            mod = importlib.reload(sys.modules[modname])
+        else:
+            mod = importlib.import_module(modname)
+        fn = getattr(mod, "run", None) or getattr(mod, "main", None)
+        if not callable(fn):
+            raise AttributeError(f"{modname} has no callable run() or main().")
+        return fn
+
+    # multiple modules
+    if isinstance(module_spec, (list, tuple)):
+        fns = [_import_runner(m) for m in module_spec]
+
+        def run_all():
+            for fn in fns:
+                fn()
+        return run_all
+
+    # single module
+    if isinstance(module_spec, str):
+        return _import_runner(module_spec)
+
+    raise TypeError(f"Unsupported module spec type: {type(module_spec).__name__}")
+
 
 # ------------------ Qt FlowView with optional picture nodes ------------------
+# ------------------ Qt FlowView with optional picture nodes ------------------
 class FlowView(QGraphicsView):
-    # --- Responsive layout baseline (design-space) ---
-    DESIGN_W = 1800
+
+    # --- Responsive layout baseline (used only as a fallback) ---
+    DESIGN_W = 4000
     DESIGN_H = 600
 
     DEFAULT_ICON_SIZE = 220
     BASE_ICON_SIZES = {
         "clean": 220, "treat_box": 400, "alayacare": 400,
         "downloads": 180, "email": 180, "raw": 220, "clean_data": 220,
-        "caredove_dl":180,"caredove":500
+        "caredove_dl": 180, "caredove": 450, "Trapeze": 400, "trapeze_dl": 180,
+        "PowerBI": 400, "reports": 400,
     }
+
     BASE_NODE_POS = {
-        "clean": (280, 60),
-        "treat_box": (1000, 60),
-        "alayacare": (1000, 270),
-        "downloads": (1600, 60),
-        "email":     (1600, 270),
-        "raw": (2200, 270),
-        "clean_data": (2800, 270),
-        "caredove" : (950,500),
-        "caredove_dl" : (1600,500)
+        "clean": (180, 335),
+        "treat_box": (900, 10),
+        "alayacare": (900, 220),
+        "downloads": (1500, 10),
+        "email": (1500, 220),
+        "raw": (1950, 335),
+        "clean_data": (2400, 335),
+        "caredove": (900, 450),
+        "caredove_dl": (1500, 450),
+        "Trapeze": (900, 650),
+        "trapeze_dl": (1500, 650),
+        "PowerBI": (2900, 150),
+        "reports": (2900, 520),
     }
-    SCENE_PADDING = 60  # extra breathing room around everything
+
+    SCENE_PADDING = 60  # extra breathing room
 
     def __init__(self, parent=None, icons_dir: Path | None = None):
         super().__init__(parent)
@@ -339,21 +410,43 @@ class FlowView(QGraphicsView):
         self.icons_dir = icons_dir or (Path(__file__).resolve().parent / "icons")
 
         # state storage
-        self._nodes = {}   # key -> {"pix": item, "bbox": (x0,y0,x1,y1), "effect": effect}
-        self._edges = []   # list of dicts per edge (see _add_arrow)
+        self._nodes: dict = {}   # key -> {"pix": item, "bbox": (x0,y0,x1,y1), "effect": effect}
+        self._edges: list = []   # list of dicts per edge
         self._states = {
             "clean": "pending", "treat_box": "pending", "alayacare": "pending",
             "downloads": "pending", "email": "pending", "raw": "pending", "clean_data": "pending",
         }
 
+        # compute dynamic design bounds before first rebuild
+        self._ensure_design_bounds()
         self.rebuild()
+
+    # ---------- bounds helpers ----------
+    def _compute_design_bounds(self) -> tuple[float, float]:
+        minx = miny = float("inf")
+        maxx = maxy = float("-inf")
+        for key, (cx, cy) in self.BASE_NODE_POS.items():
+            sz = self.BASE_ICON_SIZES.get(key, self.DEFAULT_ICON_SIZE)
+            half = sz / 2.0
+            minx = min(minx, cx - half)
+            maxx = max(maxx, cx + half)
+            miny = min(miny, cy - half)
+            maxy = max(maxy, cy + half)
+        w = max(1.0, maxx - minx)
+        h = max(1.0, maxy - miny)
+        return w, h
+
+    def _ensure_design_bounds(self) -> None:
+        if not hasattr(self, "_design_w") or not hasattr(self, "_design_h"):
+            self._design_w, self._design_h = self._compute_design_bounds()
 
     # ---------- responsive helpers ----------
     def _scale_factor(self) -> float:
+        self._ensure_design_bounds()
         vw = max(1, self.viewport().width()  - 2*self.SCENE_PADDING)
         vh = max(1, self.viewport().height() - 2*self.SCENE_PADDING)
-        sx = vw / self.DESIGN_W
-        sy = vh / self.DESIGN_H
+        sx = vw / self._design_w
+        sy = vh / self._design_h
         s = min(sx, sy)
         return max(0.35, min(s, 2.0))
 
@@ -407,7 +500,6 @@ class FlowView(QGraphicsView):
         end   = QPointF(tx0, (ty0 + ty1) / 2.0)
         return start, end
 
-    # ---- EDGE state helpers ----
     def _edge_state_color(self, state: str) -> QColor:
         if state in ("running", "done"): return QColor("#18794e")
         if state == "fail":              return QColor("#b54708")
@@ -498,16 +590,27 @@ class FlowView(QGraphicsView):
         self._nodes.clear()
         self._edges.clear()
 
+        # Recompute dynamic design bounds each time (in case layout changed)
+        self._design_w, self._design_h = self._compute_design_bounds()
         s = self._scale_factor()
+
+        # Scene rect sized to dynamic design, with padding
+        pad = self.SCENE_PADDING
+        scene_w = self._design_w * s
+        scene_h = self._design_h * s
+        self._scene.setSceneRect(-pad, -pad, scene_w + 2*pad, scene_h + 2*pad)
 
         # place nodes using scaled positions & sizes
         for key in self.BASE_NODE_POS.keys():
-            cx, cy   = self._scaled_pos(key, s)
-            size_px  = self._scaled_icon_size(key, s)
+            cx, cy = self._scaled_pos(key, s)
+            size_px = self._scaled_icon_size(key, s)
             self._add_node_image(key, cx, cy, size_px)
 
         # arrows (same logical flow)
         self._add_arrow("clean", "treat_box")
+        self._add_arrow("clean", "alayacare")
+        self._add_arrow("clean", "caredove")
+        self._add_arrow("clean", "Trapeze")
         self._add_arrow("treat_box", "downloads")
         self._add_arrow("alayacare", "email")
         self._add_arrow("downloads", "raw")
@@ -515,19 +618,20 @@ class FlowView(QGraphicsView):
         self._add_arrow("raw", "clean_data")
         self._add_arrow("caredove", "caredove_dl")
         self._add_arrow("caredove_dl", "raw")
+        self._add_arrow("Trapeze", "trapeze_dl")
+        self._add_arrow("trapeze_dl", "raw")
+        self._add_arrow("clean_data", "PowerBI")
+        self._add_arrow("clean_data", "reports")
 
         # re-apply saved states (steady glow)
         for k, st in self._states.items():
             self._apply_state(k, st)
 
-        # Scene rect sized to scaled design, with padding
-        pad = self.SCENE_PADDING
-        scene_w = self.DESIGN_W * s
-        scene_h = self.DESIGN_H * s
-        self._scene.setSceneRect(-pad, -pad, scene_w + 2*pad, scene_h + 2*pad)
+        self._edge_states: dict[tuple[str, str], str] = {}
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        # Keep full rebuild (you scale positions & sizes yourself)
         QTimer.singleShot(0, self.rebuild)
 
     # ---------- node state (steady glow) ----------
@@ -539,7 +643,8 @@ class FlowView(QGraphicsView):
     def _apply_state(self, key, state):
         self._states[key] = state
         node = self._nodes.get(key)
-        if not node: return
+        if not node:
+            return
         eff: QGraphicsDropShadowEffect = node["effect"]
         col = self._state_color(state)
         if state == "pending":
@@ -550,8 +655,6 @@ class FlowView(QGraphicsView):
     # external API used by MainWindow
     def set_node_state(self, key, state):
         self._apply_state(key, state)
-
-
 
 
 class PandasModel(QAbstractTableModel):
@@ -568,12 +671,22 @@ class PandasModel(QAbstractTableModel):
     def data(self, index, role):
         if not index.isValid() or role not in (Qt.DisplayRole, Qt.EditRole):
             return None
+
         val = self._df.iat[index.row(), index.column()]
+
+        # 🔒 Hide empties: NaN/None/NA or the literal string "nan"
+        if pd.isna(val) or (isinstance(val, str) and val.strip().lower() == "nan"):
+            return ""
+
         # nice display for floats/ints
         if isinstance(val, float):
-            return f"{val:.0f}" if val.is_integer() else f"{val:.2f}"
+            try:
+                return f"{val:.0f}" if float(val).is_integer() else f"{val:.2f}"
+            except Exception:
+                return ""  # just in case val was a weird float-like
+
         return str(val)
-        
+
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role != Qt.DisplayRole:
             return None
@@ -581,6 +694,7 @@ class PandasModel(QAbstractTableModel):
             return str(self._df.columns[section])
         else:
             return str(self._df.index[section])
+
 
 # ------------------ Main Window ------------------
 class MainWindow(QMainWindow):
@@ -649,6 +763,10 @@ class MainWindow(QMainWindow):
             os.environ["CAREDOVE_EMAIL"] = self.settings["CAREDOVE_EMAIL"]
         if "CAREDOVE_PASSWORD" in self.settings:
             os.environ["CAREDOVE_PASSWORD"] = self.settings["CAREDOVE_PASSWORD"]
+        if "TRAPEZE_USERNAME" in self.settings:
+            os.environ["TRAPEZE_USERNAME"] = self.settings["TRAPEZE_USERNAME"]
+        if "TRAPEZE_PASSWORD" in self.settings:
+            os.environ["TRAPEZE_PASSWORD"] = self.settings["TRAPEZE_PASSWORD"]
 
         # thread queue
         self.q = queue.Queue()
@@ -667,12 +785,10 @@ class MainWindow(QMainWindow):
         self.tab_auto  = QWidget()
         self.tab_rep   = QWidget()
         self.tab_out   = QWidget()   # NEW: Output tab
-        self.tab_setup = QWidget()
 
         self.tabs.addTab(self.tab_auto,  "Data Automation")
         self.tabs.addTab(self.tab_rep,   "Reports")
         self.tabs.addTab(self.tab_out,   "Output")   # NEW
-        self.tabs.addTab(self.tab_setup, "Setup")
 
 
         # ---- Data Automation tab ----
@@ -732,13 +848,22 @@ class MainWindow(QMainWindow):
         gl.addWidget(QLabel("Email"),    4, 0); gl.addWidget(self.cd_email, 4, 1)
         gl.addWidget(QLabel("Password"), 4, 2); gl.addWidget(self.cd_pass,  4, 3)
 
-        # Save button (saves both Treat and Caredove)
+        # --- Trapeze ---
+        trapeze_title = QLabel("<b>Trapeze</b>")
+        gl.addWidget(trapeze_title, 6, 0, 1, 5)
+        
+        self.tr_user = QLineEdit(os.getenv("TRAPEZE_USERNAME", self.settings.get("TRAPEZE_USERNAME", "")))
+        self.tr_pass = QLineEdit(os.getenv("TRAPEZE_PASSWORD", self.settings.get("TRAPEZE_PASSWORD", "")))
+        self.tr_pass.setEchoMode(QLineEdit.Password)
+        
+        gl.addWidget(QLabel("Username"), 7, 0); gl.addWidget(self.tr_user, 7, 1)
+        gl.addWidget(QLabel("Password"), 7, 2); gl.addWidget(self.tr_pass, 7, 3)
+        
+        # Move Save button BELOW Trapeze (row 8), span all columns, right-aligned
         self.btn_save_creds = QPushButton("Save")
         self.btn_save_creds.clicked.connect(self._save_creds)
-        gl.addWidget(self.btn_save_creds, 5, 4)
+        gl.addWidget(self.btn_save_creds, 8, 0, 1, 5, alignment=Qt.AlignRight)
 
-        self.creds_group.setVisible(False)
-        auto_layout.addWidget(self.creds_group)
 
 
         # Flow (with optional icons)
@@ -777,10 +902,15 @@ class MainWindow(QMainWindow):
             self.step_checks[key] = cb
             hl.addWidget(cb, 0)
 
-            # label + status
             lbl = QLabel(title_text)
             lbl.setMinimumWidth(600)
-            lbl.setToolTip(module)  # shows the module path on hover
+
+            # Accept str or list/tuple[str]
+            if isinstance(module, (list, tuple)):
+                tip = "\n".join(map(str, module))
+            else:
+                tip = str(module)
+            lbl.setToolTip(tip)
 
             st = QLabel("Pending")
             st.setStyleSheet(f"color:{STATUS_COLORS['pending']};")
@@ -808,15 +938,9 @@ class MainWindow(QMainWindow):
         ctl.addWidget(self.progress); ctl.addStretch(1)
         auto_layout.addLayout(ctl)
 
-
-        # ---- Reports tab ----
-        rep_layout = QVBoxLayout(self.tab_rep)
-        rep_layout.setSpacing(8)
-        rep_layout.addWidget(QLabel("<b>Reports</b>"))
-
         # ---- Output tab (full-bleed table) ----
         out_layout = QVBoxLayout(self.tab_out)
-        out_layout.setContentsMargins(0, 0, 0, 0)   # no padding
+        out_layout.setContentsMargins(0, 0, 0, 0)
         out_layout.setSpacing(0)
         
         self.out_table = QTableView(self.tab_out)
@@ -830,37 +954,75 @@ class MainWindow(QMainWindow):
         self.out_table.setSelectionMode(QTableView.SingleSelection)
         self.out_table.setWordWrap(False)
         self.out_table.setCornerButtonEnabled(False)
-        
         out_layout.addWidget(self.out_table)
-
-
-
-
-
-        self.report_checks = {}
-        for key, label, _ in REPORTS:
-            cb = QCheckBox(label)
-            rep_layout.addWidget(cb)
-            self.report_checks[key] = cb
-
+        
+        # ---- Reports tab ----
+        rep_layout = QVBoxLayout(self.tab_rep)
+        rep_layout.setSpacing(8)
+        rep_layout.addWidget(QLabel("<b>Reports</b>"))
+        
+        # Split the page vertically into Daily / Weekly / Monthly
+        splitter = QSplitter(Qt.Vertical, self.tab_rep)
+        rep_layout.addWidget(splitter, 1)
+        
+        self.report_checks = {}     # key -> checkbox (define ONCE)
+        self._section_checks = {}   # cadence -> list[checkboxes]
+        
+        def build_section(title: str, cadence_key: str):
+            box = QGroupBox(title)
+            v = QVBoxLayout(box); v.setSpacing(6)
+        
+            # Select-all for this section
+            row = QWidget(); hl = QHBoxLayout(row); hl.setContentsMargins(0,0,0,0)
+            sel_all = QCheckBox("Select all in this section")
+            hl.addWidget(sel_all); hl.addStretch(1)
+            v.addWidget(row)
+        
+            # Container for the report checkboxes
+            container = QWidget(); cv = QVBoxLayout(container)
+            cv.setContentsMargins(0,0,0,0); cv.setSpacing(4)
+            v.addWidget(container, 1)
+        
+            checks_in_section = []
+            # REPORTS is now (key, label, module, cadence)
+            for key, label, module, cadence in REPORTS:
+                if cadence != cadence_key:
+                    continue
+                cb = QCheckBox(label)
+                cb.setObjectName(f"rep_{key}")
+                cb.setToolTip(str(module))
+                cv.addWidget(cb)
+                self.report_checks[key] = cb
+                checks_in_section.append(cb)
+        
+            # Select-all behavior for this section
+            def toggle_all(state):
+                on = state == Qt.Checked
+                for c in checks_in_section:
+                    c.setChecked(on)
+            sel_all.stateChanged.connect(toggle_all)
+        
+            self._section_checks[cadence_key] = checks_in_section
+            return box
+        
+        daily_box   = build_section("Daily",   "daily")
+        weekly_box  = build_section("Weekly",  "weekly")
+        monthly_box = build_section("Monthly", "monthly")
+        
+        splitter.addWidget(daily_box)
+        splitter.addWidget(weekly_box)
+        splitter.addWidget(monthly_box)
+        
+        # Optional: nicer initial splitter sizes
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 1)
+        
+        # Run button at the bottom (ONE instance)
         self.btn_run_reports = QPushButton("Create report(s)")
         self.btn_run_reports.clicked.connect(self.start_reports)
         rep_layout.addWidget(self.btn_run_reports)
-        rep_layout.addStretch(1)
 
-        # ---- Setup tab ----
-        setup_layout = QVBoxLayout(self.tab_setup)
-        setup_layout.setSpacing(8)
-        setup_layout.addWidget(QLabel("<b>Environment Setup</b>"))
-
-        self.btn_install_deps = QPushButton("Check & Install Libraries")
-        self.btn_install_deps.clicked.connect(self.start_deps_check)
-        setup_layout.addWidget(self.btn_install_deps)
-
-        self.setup_log = QPlainTextEdit()
-        self.setup_log.setReadOnly(True)
-        self.setup_log.setMaximumBlockCount(5000)
-        setup_layout.addWidget(self.setup_log, 1)
 
         # ---- Shared log at the bottom ----
         self.log = QPlainTextEdit()
@@ -875,27 +1037,35 @@ class MainWindow(QMainWindow):
 
     # ---- creds
     def _save_creds(self):
-        # Treat
-        u = self.in_user.text().strip()
-        p = self.in_pass.text()
-    
-        # Caredove
-        cd_email = self.cd_email.text().strip()
-        cd_pass  = self.cd_pass.text()
-    
-        # Apply to env immediately
-        _apply_treat_env(u, p)
-        _apply_caredove_env(cd_email, cd_pass)
-    
-        # Persist
-        s = dict(_load_settings())
-        s["TREAT_USERNAME"]    = u
-        s["TREAT_PASSWORD"]    = p
-        s["CAREDOVE_EMAIL"]    = cd_email
-        s["CAREDOVE_PASSWORD"] = cd_pass
-        _save_settings(s)
-    
-        self._log("Saved Treat & Caredove credentials (env updated).")
+       # Treat
+       u = self.in_user.text().strip()
+       p = self.in_pass.text()
+
+       # Caredove
+       cd_email = self.cd_email.text().strip()
+       cd_pass  = self.cd_pass.text()
+
+       # Trapeze
+       tr_u = self.tr_user.text().strip()
+       tr_p = self.tr_pass.text()
+
+       # Apply to env immediately
+       _apply_treat_env(u, p)
+       _apply_caredove_env(cd_email, cd_pass)
+       _apply_trapeze_env(tr_u, tr_p)
+
+       # Persist
+       s = dict(_load_settings())
+       s["TREAT_USERNAME"]     = u
+       s["TREAT_PASSWORD"]     = p
+       s["CAREDOVE_EMAIL"]     = cd_email
+       s["CAREDOVE_PASSWORD"]  = cd_pass
+       s["TRAPEZE_USERNAME"]   = tr_u
+       s["TRAPEZE_PASSWORD"]   = tr_p
+       _save_settings(s)
+
+       self._log("Saved Treat, Caredove & Trapeze credentials (env updated).")
+
 
 
     # ---- logging
@@ -1004,7 +1174,8 @@ class MainWindow(QMainWindow):
 
 
     def start_reports(self):
-        selected = [(key, label, module) for (key, label, module) in REPORTS if self.report_checks[key].isChecked()]
+        selected = [(key, label, module) for (key, label, module, cadence) in REPORTS
+                if self.report_checks[key].isChecked()]
         if not selected:
             self._log("No reports selected."); return
         self.btn_run_reports.setEnabled(False); self.btn_run_reports.setText("Running…")
@@ -1072,22 +1243,39 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
             pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
             com_inited = True
         except Exception as e:
-            # Keep this as a single-line warning (quiet)
             win.q.put(("log", {"msg": f"COM init warning: {e}"}))
 
         for key, label, module in selected_reports:
             try:
                 runner = _get_runner(module)
-                result = runner()  # let the module do its thing quietly
+                result = runner()  # Module decides what to return
 
-                # If it returns a DataFrame, show it in the Output Table
+                # Show in Output table if we get a DataFrame,
+                # OR if we get a path to a CSV/XLSX file.
+                df_to_show = None
+
                 if isinstance(result, pd.DataFrame):
-                    win._show_dataframe(result)
+                    df_to_show = result
+
+                elif isinstance(result, (str, Path)):
+                    p = Path(result)
+                    if p.suffix.lower() == ".csv":
+                        # Your CSS pipeline writes CSV w/o headers; show as-is
+                        df_to_show = pd.read_csv(p, header=None, dtype="object", encoding="utf-8-sig")
+                    elif p.suffix.lower() in (".xlsx", ".xls"):
+                        # If a report writes Excel, preview it too
+                        df_to_show = pd.read_excel(p, header=None, dtype="object")
+
+                if df_to_show is not None:
+                    win._show_dataframe(df_to_show)
 
                 # ONE LINE ONLY ✅
-                win.q.put(("log", {"msg": f"{label} — successfully generated."}))
+                if isinstance(result, (str, Path)):
+                    win.q.put(("log", {"msg": f"{label} — file updated: {Path(result)}"}))
+                else:
+                    win.q.put(("log", {"msg": f"{label} — successfully generated."}))
+
             except Exception as e:
-                # ONE LINE ONLY ❌
                 win.q.put(("log", {"msg": f"{label} — failed: {e}"}))
                 win.q.put(("reports_failed", {}))
                 return
@@ -1097,6 +1285,7 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
         if com_inited:
             try: pythoncom.CoUninitialize()
             except Exception: pass
+
 
 
 

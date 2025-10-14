@@ -33,7 +33,10 @@ APPEND_REPORTS = {
     "Facilities_Attendance": "Facilities Attendance", # generic append
     "Form_Report":           "Form Report",           # generic append
     "Notes":                 "Notes",                 # custom: append + drop_duplicates
-    "Visits":                "Visits",                 # custom: keep newest on key (see below)
+    "Visits":                "Visits",   
+    "notes_client_look":       "notes_client_look",
+    "notes_progress_look":      "notes_progress_look",
+    "notes_visit_look": "notes_visit_look"              # custom: keep newest on key (see below)
 }
 
 # ===== Helpers =====

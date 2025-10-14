@@ -1083,7 +1083,7 @@ def run():
     # --- WebFOCUS ---
     print("Running WebFOCUS tiles in sequence...")
     # Define the exact tiles to run (edit this list as needed)
-    webfocus_tiles = ["Assessments", "External Documents", "Demographics_Active Clients"]
+    webfocus_tiles = ["Assessments", "External Documents", "Demographics_Active Clients","Note Content RAC"]
 #
     for idx, tile_label in enumerate(webfocus_tiles):
         # Open the report hub

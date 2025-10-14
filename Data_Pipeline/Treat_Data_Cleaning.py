@@ -597,11 +597,10 @@ def run():
     # ---- Existing CSV flows ----
     process_file("ADTCensusCAN", ["NewAdmissionstoOrg"], per_file_transform=_adtcensuscan_transform)
     process_file(
-    "RECONNECTWORKProofingByClinician",
-    ["textbox121"],
-    per_file_transform=_reconnectworkproofingbyclinician_transform
-)
-
+        "RECONNECTWORKProofingByClinician",
+        ["textbox121"],
+        per_file_transform=_reconnectworkproofingbyclinician_transform
+    )
     process_file("rpt_Census", ["AddtionalAddressType","AdditionalAddressType"], per_file_transform=_rpt_census_transform)
     process_file("rpt_MIS_Stats", ["textbox1"], per_file_transform=_rpt_mis_stats_transform)
     process_file("rpt_ProgStaffFinance", ["textbox55"], per_file_transform=_rpt_progstafffinance_transform)
@@ -622,16 +621,32 @@ def run():
 
     # Demographics: MRN→ID only
     process_excel(
-    "Demographics",
-    dest_name="Demographics.csv",
-    needles=("MRN",),
-    filldown=False,
-    postprocess=_apply_demographics_codebook
-)
+        "Demographics",
+        dest_name="Demographics.csv",
+        needles=("MRN",),
+        filldown=False,
+        postprocess=_apply_demographics_codebook
+    )
 
+    # ---- NEW: Notes_Test -> notes_content.csv (replace each time) ----
+    # Prefer Excel with a "Notes_Test*" prefix; fall back to a CSV named Notes_Test.csv
+    out = process_excel(
+        "Notes_Test",
+        dest_name="notes_content.csv",
+        needles=("MRN", "ID", "Client", "Notes"),
+        filldown=False
+    )
+    if not out:
+        # If the source is already CSV in Raw, re-write it to Clean with the new name
+        process_file(
+            "Notes_Test",
+            ["MRN", "ID", "Client", "Notes"],
+            dest_name_override="notes_content.csv"
+        )
 
     # External_Documents_Report: filldown all columns, MRN→ID
     process_excel("External_Documents_Report", dest_name="External_Documents_Report.csv", needles=("MRN",), filldown=True)
+
 
 # Optional alias
 def main():
