@@ -16,7 +16,7 @@ def clean_dir() -> Path:
     return Path.home() / "OneDrive - Reconnect Community Health Services (1)" / "data" / "Clean Data" / "Treat"
 
 # -------- Test IDs to remove --------
-TEST_IDS = {"1","10314","12675","7941","7942","9383","9384","11633","8239"}
+TEST_IDS = {"1","10314","12675","7941","7942","9383","9384","11633","8239","7945"}
 
 # ============================================================
 # =============== CSV HELPERS (existing logic) ===============
@@ -584,6 +584,116 @@ def process_file(stem: str,
     _write_csv_atomic(dest, delim, header, rows)
     print(f"[OK] {src.name} -> {dest.name} (row {hdr_idx}, sep '{delim}', enc {enc})")
 
+def _drop_name_duplicates_case_insensitive_df(
+    df: pd.DataFrame,
+    col: str = "ClientFullName"
+) -> pd.DataFrame:
+    """
+    Drop duplicate rows based on a name column, ignoring case/whitespace.
+    Keeps the first occurrence (effectively 'random' unless you sort first).
+    """
+    if col not in df.columns:
+        return df
+
+    s = df[col].astype(str)
+
+    # normalize: strip, collapse whitespace, uppercase
+    key = (
+        s.str.replace(r"\s+", " ", regex=True)
+         .str.strip()
+         .str.upper()
+    )
+
+    # Treat blanks as NOT a key (don't dedupe blanks together)
+    is_blank = key.eq("") | key.eq("NAN")  # in case NaN became "nan"
+    key = key.mask(is_blank, other=pd.NA)
+
+    # drop duplicates by normalized key (ignore case)
+    out = df.loc[~key.duplicated(keep="first")].copy()
+    return out
+
+def _clean_spaces_in_columns_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [
+        re.sub(r"\s+", " ", str(c)).strip()
+        for c in df.columns
+    ]
+    return df
+
+
+def _ipcc_goal_postprocess(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # fill down everything
+    df = df.ffill()
+
+    # remove duplicates
+    df = df.drop_duplicates()
+
+    # clean column names
+    df = _clean_spaces_in_columns_df(df)
+
+    # rename first column to ID
+    cols = list(df.columns)
+    if len(cols) >= 1:
+        cols[0] = "ID"
+    df.columns = cols
+
+    # convert col 6,7,11 in R -> index 5,6,10 in Python
+    for idx in [5, 6, 10]:
+        if idx < len(df.columns):
+            df.iloc[:, idx] = pd.to_datetime(df.iloc[:, idx], errors="coerce").dt.date
+
+    expected_cols = [
+        "ID",
+        "Goal PLANID",
+        "Goal Program Name",
+        "Goal Issue/Needs Title",
+        "Domain",
+        "Goal Created On",
+        "Goal Modified On",
+        "Objective/Goal",
+        "Goal Type (Long-Term/Short-Term)",
+        "Goal Status",
+        "Goal Anticipated End Date",
+        "Goal Count",
+    ]
+
+    if len(df.columns) == len(expected_cols):
+        df.columns = expected_cols
+    else:
+        print(f"[WARN] IPCC_Goal: expected {len(expected_cols)} columns, got {len(df.columns)}; skipped final rename.")
+
+    return df
+
+
+def _ipcc_issue_postprocess(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # clean column names
+    df = _clean_spaces_in_columns_df(df)
+
+    # fill selected columns down
+    fill_cols = ["MRN", "PLANID", "Full Name", "Program Name", "Issue/Needs Title"]
+    existing_fill_cols = [c for c in fill_cols if c in df.columns]
+    if existing_fill_cols:
+        df[existing_fill_cols] = df[existing_fill_cols].ffill()
+
+    # filter out test ID 11633
+    if "MRN" in df.columns:
+        df = df[df["MRN"].astype(str).str.strip() != "11633"].copy()
+
+    # rename by position, matching your R logic
+    cols = list(df.columns)
+    if len(cols) >= 1:
+        cols[0] = "ID"
+    if len(cols) >= 7:
+        cols[6] = "Issue/Needs Status"
+    if len(cols) >= 13:
+        cols[12] = "Treatment/Rehab/Intervention Comments"
+    df.columns = cols
+
+    return df
 # ============================================================
 # ====================== ORCHESTRATOR ========================
 # ============================================================
@@ -619,14 +729,19 @@ def run():
     # Assessment: filldown all columns, MRN→ID
     process_excel("Assessment", dest_name="Assessment.csv", needles=("MRN",), filldown=True)
 
-    # Demographics: MRN→ID only
+    def _demographics_postprocess(df: pd.DataFrame) -> pd.DataFrame:
+        df = _apply_demographics_codebook(df)
+        df = _drop_name_duplicates_case_insensitive_df(df, col="Client\nFull\nName")
+        return df
+
     process_excel(
         "Demographics",
         dest_name="Demographics.csv",
         needles=("MRN",),
         filldown=False,
-        postprocess=_apply_demographics_codebook
+        postprocess=_demographics_postprocess
     )
+
 
     # ---- NEW: Notes_Test -> notes_content.csv (replace each time) ----
     # Prefer Excel with a "Notes_Test*" prefix; fall back to a CSV named Notes_Test.csv
@@ -646,6 +761,22 @@ def run():
 
     # External_Documents_Report: filldown all columns, MRN→ID
     process_excel("External_Documents_Report", dest_name="External_Documents_Report.csv", needles=("MRN",), filldown=True)
+    
+    process_excel(
+        "IPCC_Goal",
+        dest_name="IPCC_Goal.csv",
+        needles=("MRN", "PLANID", "ID"),
+        filldown=False,
+        postprocess=_ipcc_goal_postprocess
+    )
+
+    process_excel(
+        "IPCC_Issue",
+        dest_name="IPCC_Issue.csv",
+        needles=("MRN", "PLANID", "ID"),
+        filldown=False,
+        postprocess=_ipcc_issue_postprocess
+    )
 
 
 # Optional alias

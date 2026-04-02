@@ -21,28 +21,39 @@ URL_LOGIN = "https://www.caredove.com/user/account"
 URL_REPORTS_MAIN = "https://www.caredove.com/organization/reports/orgid/3866"  # Reconnect Health Services
 URL_REPORTS_WEST = "https://www.caredove.com/organization/reports/orgid/3851"  # West Community Connect Hub
 
-EMAIL = "yxu@reconnect.on.ca"
-PASSWORD = "Jiazhuo2018#"
+# Recommended: set these as environment variables instead of hardcoding
+# Windows (PowerShell):
+#   setx CAREDOVE_EMAIL "yxu@reconnect.on.ca"
+#   setx CAREDOVE_PASSWORD "your_password"
+EMAIL = os.getenv("CAREDOVE_EMAIL", "yxu@reconnect.on.ca")
+PASSWORD = os.getenv("CAREDOVE_PASSWORD", "Jiazhuo2018#")
 
 DOWNLOAD_DIR = str(Path.home() / "Downloads" / "caredove")
 DOWNLOAD_TIMEOUT = 120  # seconds
 
 
-# ----------------------- DATE LOGIC (Sep 1 fiscal) -----------------------
+# ----------------------- DATE LOGIC (Fiscal year starts Apr 1; last 2 FYs) -----------------------
+def last_two_fiscal_years_window(fy_start_month=4, fy_start_day=1):
+    """
+    Returns (start_date, end_date) where:
+    - start_date = Apr 1 of the fiscal year that began 2 fiscal years ago
+    - end_date   = today
 
-def calendar_year_window():
+    Example (today=2026-02-17, fiscal starts Apr 1):
+      start = 2024-04-01
+      end   = 2026-02-17
+    """
     today = date.today()
-    # next month
-    next_month = today.month + 1
-    year = today.year
-    if next_month == 13:
-        next_month = 1
-        year += 1
-    
-    # start = first day of "next month" but in the previous year
-    start = date(year - 1, next_month, 1)
-    return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
 
+    # Fiscal year start for the fiscal year that contains 'today'
+    current_fy_start_year = today.year
+    if (today.month, today.day) < (fy_start_month, fy_start_day):
+        current_fy_start_year -= 1
+
+    start = date(current_fy_start_year - 2, fy_start_month, fy_start_day)
+    end = today
+
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
 # ----------------------- HELPERS -----------------------
@@ -53,20 +64,25 @@ def wait_ready(driver, timeout=25):
 
 def safe_click(driver, elem):
     try:
-        elem.click(); return True
+        elem.click()
+        return True
     except WebDriverException:
         pass
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elem)
-        time.sleep(0.2); elem.click(); return True
+        time.sleep(0.2)
+        elem.click()
+        return True
     except WebDriverException:
         pass
     try:
-        ActionChains(driver).move_to_element(elem).pause(0.1).click().perform(); return True
+        ActionChains(driver).move_to_element(elem).pause(0.1).click().perform()
+        return True
     except WebDriverException:
         pass
     try:
-        driver.execute_script("arguments[0].click();", elem); return True
+        driver.execute_script("arguments[0].click();", elem)
+        return True
     except WebDriverException:
         return False
 
@@ -129,8 +145,8 @@ def choose_dropdown_option(wait, driver, option_text: str):
         raise RuntimeError(f"Could not click option: {option_text}")
 
 def set_custom_date_range(wait, driver):
-    """Ensure 'Custom' is selected and set start/end inputs using Sep 1 fiscal window."""
-    start_str, end_str = calendar_year_window()
+    """Ensure 'Custom' is selected and set start/end inputs using last 2 fiscal years (Apr 1 fiscal)."""
+    start_str, end_str = last_two_fiscal_years_window()
 
     # 1) Prefer clicking label[for='op6'] (some UIs hide the radio input)
     try:
@@ -139,7 +155,7 @@ def set_custom_date_range(wait, driver):
     except TimeoutException:
         pass  # fall through
 
-    # 2) Also ensure the actual radio is checked (JS fallback)
+    # 2) Ensure the actual radio is checked (JS fallback)
     try:
         custom_radio = driver.find_element(By.ID, "op6")
         driver.execute_script(
@@ -151,7 +167,6 @@ def set_custom_date_range(wait, driver):
         raise RuntimeError("CUSTOM date range radio (#op6) not found")
 
     # 3) Wait until date inputs are visible/enabled
-    # Try by explicit IDs; if not, fall back to class 'rangeDates'
     start_input = None
     end_input = None
     try:
@@ -164,10 +179,7 @@ def set_custom_date_range(wait, driver):
         pass
 
     if start_input is None or end_input is None:
-        inputs = wait.until(EC.presence_of_all_elements_located(
-            (By.CSS_SELECTOR, "input.rangeDates")
-        ))
-        # choose first as start, last as end (common pattern)
+        inputs = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input.rangeDates")))
         if inputs:
             if start_input is None:
                 start_input = inputs[0]
@@ -213,7 +225,8 @@ def run_and_download():
     driver.get(URL_LOGIN)
     wait.until(EC.presence_of_element_located((By.ID, "LoginForm_u_email"))).send_keys(EMAIL)
     pwd = wait.until(EC.presence_of_element_located((By.ID, "LoginForm_u_password")))
-    pwd.clear(); pwd.send_keys(PASSWORD)
+    pwd.clear()
+    pwd.send_keys(PASSWORD)
     wait.until(EC.element_to_be_clickable((By.ID, "formSubmit"))).click()
     wait_ready(driver)
 
@@ -227,23 +240,17 @@ def run_and_download():
         driver.get(URL_REPORTS_MAIN)
     wait_ready(driver)
 
+    download_btn_xpath = "//button[contains(@class,'download_report') and contains(., 'Download Data (.xlsx)')]"
+
     # --- Reconnect: Inbound ---
     choose_dropdown_option(wait, driver, "Spreadsheet: Inbound Referral Raw Data")
     set_custom_date_range(wait, driver)
-    download_and_rename(
-        driver, wait,
-        "//button[contains(@class,'download_report') and contains(., 'Download Data (.xlsx)')]",
-        DOWNLOAD_DIR, "CaredoveBookingsReport_Reconnect"
-    )
+    download_and_rename(driver, wait, download_btn_xpath, DOWNLOAD_DIR, "CaredoveBookingsReport_Reconnect")
 
     # --- Reconnect: Outbound ---
     choose_dropdown_option(wait, driver, "Spreadsheet: Outbound Referral Raw Data")
     set_custom_date_range(wait, driver)
-    download_and_rename(
-        driver, wait,
-        "//button[contains(@class,'download_report') and contains(., 'Download Data (.xlsx)')]",
-        DOWNLOAD_DIR, "CaredoveBookingsReport_Outbound_Reconnect"
-    )
+    download_and_rename(driver, wait, download_btn_xpath, DOWNLOAD_DIR, "CaredoveBookingsReport_Outbound_Reconnect")
 
     # --- Navigate directly to West Hub (orgid=3851) ---
     driver.get(URL_REPORTS_WEST)
@@ -252,28 +259,18 @@ def run_and_download():
     # --- West: Inbound ---
     choose_dropdown_option(wait, driver, "Spreadsheet: Inbound Referral Raw Data")
     set_custom_date_range(wait, driver)
-    download_and_rename(
-        driver, wait,
-        "//button[contains(@class,'download_report') and contains(., 'Download Data (.xlsx)')]",
-        DOWNLOAD_DIR, "CaredoveBookingsReport_West"
-    )
+    download_and_rename(driver, wait, download_btn_xpath, DOWNLOAD_DIR, "CaredoveBookingsReport_West")
 
     # --- West: Outbound ---
     choose_dropdown_option(wait, driver, "Spreadsheet: Outbound Referral Raw Data")
     set_custom_date_range(wait, driver)
-    download_and_rename(
-        driver, wait,
-        "//button[contains(@class,'download_report') and contains(., 'Download Data (.xlsx)')]",
-        DOWNLOAD_DIR, "CaredoveBookingsReport_Outbound_West"
-    )
+    download_and_rename(driver, wait, download_btn_xpath, DOWNLOAD_DIR, "CaredoveBookingsReport_Outbound_West")
 
     print("All four reports downloaded and renamed ✅")
     driver.quit()
-    return
 
 def run():
-    return run_and_download()
-
+    run_and_download()
 
 if __name__ == "__main__":
     run_and_download()

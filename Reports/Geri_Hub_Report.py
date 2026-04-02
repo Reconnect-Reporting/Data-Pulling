@@ -99,7 +99,11 @@ def _build_tables():
     visits_path = newest_any("Visits", Alaya_DIR)
     visits_df   = read_any(visits_path)
 
-    g_hub = visits_df[visits_df["ServiceCode"] == "Geriatric Hub"].copy()
+    g_hub = visits_df[
+    visits_df["Service Description"]
+        .astype(str)
+        .str.contains("geri", case=False, na=False)].copy()
+    
     g_hub["__Date"] = pd.to_datetime(g_hub["Date"], errors="coerce", utc=True).dt.tz_convert(None)
     mask_ac = (g_hub["__Date"] >= prev_start) & (g_hub["__Date"] < month_start)
     g_hub_prev = g_hub.loc[mask_ac].copy()

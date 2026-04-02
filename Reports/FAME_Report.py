@@ -420,7 +420,13 @@ def main():
     keep_vba = template_path.lower().endswith(".xlsm")
 
     base_template_ext = os.path.splitext(template_path)[1]  # keep .xlsx/.xlsm
-    out_name = f"CMHA Peel - FAME - {report_month_name} 2025{base_template_ext}"
+    report_period = today.replace(day=1) - pd.DateOffset(months=1)
+
+    out_name = (
+        f"CMHA Peel - FAME - "
+        f"{report_period.strftime('%B %Y')}"
+        f"{base_template_ext}"
+    )
 
     # ✅ Save to Downloads (not %TEMP%)
     out_path = DOWNLOADS / out_name

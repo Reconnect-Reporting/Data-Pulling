@@ -79,36 +79,35 @@ def _gather_files(src_dir: Path, patterns: Iterable[str], recursive: bool) -> li
 
 # --- Main movers ---
 def move_downloads_to_treat(
-    patterns = ("*.csv", "rpt_*"),   # adjust as needed
+    patterns=("*.csv", "rpt_*"),
     recursive: bool = False,
-    special_prefixes: tuple[str, ...] = ("Assessments", "Demographics", "External_Documents_Report"),
+    special_prefixes: tuple[str, ...] = (
+        "Assessments",
+        "Demographics",
+        "External_Documents_Report",
+        "Notes_Test",
+        "IPCC_Goal",
+        "IPCC_Issue",
+    ),
 ) -> list[Path]:
-    """
-    Move non-special files from ~/Downloads to OneDrive...\Raw Data\Treat, REPLACING same-named files.
-    The three 'special' families are handled by move_special_reports() so they don't get moved twice.
-    Returns list of destination Paths moved (general files only).
-    """
     src_dir = get_downloads_dir()
     dst_dir = get_treat_dir()
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     special_lc = tuple(s.lower() for s in special_prefixes)
-
-    # Collect candidates for general move
     candidates = _gather_files(src_dir, patterns, recursive)
 
     moved: list[Path] = []
     for f in candidates:
-        # Skip if in-progress or unstable
         if _is_incomplete(f) or not _wait_size_stable(f):
             continue
-        # Exclude "special" prefixes so they are handled in dedicated logic
+
         if f.name.lower().startswith(special_lc):
             continue
 
         dest = dst_dir / f.name
         try:
-            _atomic_replace_move(f, dest)  # ALWAYS replaces if name exists
+            _atomic_replace_move(f, dest)
             moved.append(dest)
             print(f"Moved (replaced if existed): {f.name} -> {dest}")
         except Exception as e:
@@ -122,48 +121,43 @@ def move_downloads_to_treat(
 
 def move_special_reports(
     recursive: bool = False,
-    special_prefixes: tuple[str, ...] = ("Assessments", "Demographics", "External_Documents_Report"),
+    special_prefixes: tuple[str, ...] = (
+        "Assessments",
+        "Demographics",
+        "External_Documents_Report",
+        "Notes_Test",
+        "IPCC_Goal",
+        "IPCC_Issue",
+    ),
 ) -> dict[str, Path]:
-    """
-    For each special prefix, pick ONE file at random from ~/Downloads that starts with it,
-    and move it to the Treat Raw Data folder (atomic replace). Skips in-progress files.
-    The destination filename is normalized to just the base + original extension:
-      - 'Assessments*' -> 'Assessment.ext'
-      - 'Demographics*' -> 'Demographics.ext'
-      - 'External_Documents_Report*' -> 'External_Documents_Report.ext'
-    Returns a mapping {prefix: moved_path} for those successfully moved.
-    """
     src_dir = get_downloads_dir()
     dst_dir = get_treat_dir()
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalized base names for destination
     normalize_name = {
-        "Assessments": "Assessment",  # singular as requested
+        "Assessments": "Assessment",
         "Demographics": "Demographics",
         "External_Documents_Report": "External_Documents_Report",
+        "Notes_Test": "Notes_Test",
+        "IPCC_Goal": "IPCC_Goal",
+        "IPCC_Issue": "IPCC_Issue",
     }
 
     picked: dict[str, Path] = {}
     for prefix in special_prefixes:
-        # Gather all files whose name starts with the prefix (any extension)
         pool = (
             [p for p in src_dir.rglob(f"{prefix}*") if p.is_file()]
             if recursive
             else [p for p in src_dir.glob(f"{prefix}*") if p.is_file()]
         )
 
-        # Filter out incomplete/unstable
         pool = [p for p in pool if not _is_incomplete(p) and _wait_size_stable(p)]
 
         if not pool:
             print(f"No ready files found for prefix '{prefix}'.")
             continue
 
-        # Pick one at random (as requested)
         choice = random.choice(pool)
-
-        # Normalize the destination name to base + original extension
         base = normalize_name.get(prefix, prefix)
         dest = dst_dir / f"{base}{choice.suffix}"
 
@@ -181,17 +175,26 @@ def move_special_reports(
     return picked
 
 def run(
-    patterns = ("*.csv", "rpt_*"),
+    patterns=("*.csv", "rpt_*"),
     recursive: bool = False,
-    special_prefixes: tuple[str, ...] = ("Assessments", "Demographics", "External_Documents_Report","Notes_Test"),
+    special_prefixes: tuple[str, ...] = (
+        "Assessments",
+        "Demographics",
+        "External_Documents_Report",
+        "Notes_Test",
+        "IPCC_Goal",
+        "IPCC_Issue",
+    ),
 ):
-    """
-    Entry point:
-    - Moves general files (patterns), EXCLUDING the special prefixes.
-    - Then moves exactly ONE randomly chosen file for each special prefix, renaming to the base.
-    """
-    moved_general = move_downloads_to_treat(patterns=patterns, recursive=recursive, special_prefixes=special_prefixes)
-    moved_special = move_special_reports(recursive=recursive, special_prefixes=special_prefixes)
+    moved_general = move_downloads_to_treat(
+        patterns=patterns,
+        recursive=recursive,
+        special_prefixes=special_prefixes
+    )
+    moved_special = move_special_reports(
+        recursive=recursive,
+        special_prefixes=special_prefixes
+    )
     return {"general": moved_general, "special": moved_special}
 
 # Optional alias so _get_runner() can also use main()

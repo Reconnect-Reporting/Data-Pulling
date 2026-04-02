@@ -3,6 +3,8 @@ import os, re, glob, shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
+from calendar import month_name
+
 
 # ===== Paths =====
 OD = Path.home() / "OneDrive - Reconnect Community Health Services (1)"
@@ -40,6 +42,20 @@ APPEND_REPORTS = {
 }
 
 # ===== Helpers =====
+
+def list_all_files(folder: Path) -> list[Path]:
+    """Return ALL files in folder matching EXTS, sorted by name."""
+    hits: list[Path] = []
+    for ext in EXTS:
+        hits.extend(Path(folder).glob(f"*{ext}"))
+    return sorted(hits)
+
+def previous_month_name_from_date(dt: datetime) -> str:
+    """Return the full English month name for the month BEFORE dt."""
+    first_of_month = dt.replace(day=1)
+    prev_month_day = first_of_month - timedelta(days=1)
+    return prev_month_day.strftime("%B")
+
 def extract_date_from_name(name: str) -> datetime | None:
     m = DATE_RE.search(name)
     if not m:
@@ -217,6 +233,42 @@ def merge_visit_keep_new(clean_name: str, existing: Path, recent_files: list[Pat
     return result
 
 # ===== Tasks =====
+
+def update_hub_and_spoke_month_label():
+    """
+    From RAW_ROOT/Hub_and_Spoke pick the latest dated file like:
+      Hub_and_Spoke_YYYY-MM-DD.ext
+    Use the date in the filename to compute the PREVIOUS MONTH, then copy to:
+      CLEAN_DIR/'Hub and Spoke'/Hub_and_Spoke_<MonthName>.ext
+    Example: 2025-10-23 -> 'Hub_and_Spoke_September.csv'
+    """
+    raw_folder = RAW_ROOT / "Hub_and_Spoke"
+    if not raw_folder.exists():
+        print("[Hub_and_Spoke] Raw folder not found:", raw_folder)
+        return
+
+    latest = find_latest_file(raw_folder)
+    if not latest:
+        print("[Hub_and_Spoke] No files found.")
+        return
+
+    dt = extract_date_from_name(latest.name)
+    if dt is None:
+        # Fallback: use modified time if no date embedded (shouldn't happen per your pattern)
+        dt = datetime.fromtimestamp(latest.stat().st_mtime)
+
+    month_label = previous_month_name_from_date(dt)  # e.g., "September"
+
+    dest_dir = CLEAN_DIR / "Hub and Spoke"   # note the space in folder name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = dest_dir / f"Hub_and_Spoke_{month_label}{latest.suffix}"
+    try:
+        atomic_copy(latest, dest)
+        print(f"[Hub_and_Spoke] {latest.name} -> {dest.relative_to(CLEAN_DIR)}")
+    except Exception as e:
+        print(f"[Hub_and_Spoke] ERROR copying {latest}: {e}")
+
 def update_latest_fixed_names():
     for raw_folder_name, clean_base_name in LATEST_COPY_REPORTS.items():
         raw_folder = RAW_ROOT / raw_folder_name
@@ -237,15 +289,23 @@ def update_latest_fixed_names():
             print(f"[{clean_base_name}] ERROR copying {latest}: {e}")
 
 def append_last_n_days():
+    SPECIAL_ALL_FILES = {"notes_client_look", "notes_progress_look"}  # <— add this
+
     for raw_folder_name, clean_base_name in APPEND_REPORTS.items():
         raw_folder = RAW_ROOT / raw_folder_name
         if not raw_folder.exists():
             print(f"[{clean_base_name}] Raw folder not found: {raw_folder}")
             continue
 
-        recent_files = list_recent_files(raw_folder, APPEND_DAYS)
+        # Use ALL files for the two notes_* folders; otherwise last N days
+        if raw_folder_name in SPECIAL_ALL_FILES:
+            recent_files = list_all_files(raw_folder)
+        else:
+            recent_files = list_recent_files(raw_folder, APPEND_DAYS)
+
         if not recent_files:
-            print(f"[{clean_base_name}] No recent files (last {APPEND_DAYS} days).")
+            scope = "ALL files" if raw_folder_name in SPECIAL_ALL_FILES else f"last {APPEND_DAYS} days"
+            print(f"[{clean_base_name}] No files found ({scope}).")
             continue
 
         # Decide main Clean path (prefer existing ext; else default to CSV)
@@ -262,7 +322,7 @@ def append_last_n_days():
         name_lower = clean_base_name.lower()
         if name_lower == "notes":
             merged = merge_notes_append(clean_base_name, existing, recent_files)
-        elif name_lower == "visit":
+        elif name_lower in ("visit", "visits"):  # <— fix: handle plural
             merged = merge_visit_keep_new(clean_base_name, existing, recent_files)
         else:
             merged = merge_generic_append(clean_base_name, existing, recent_files)
@@ -274,8 +334,10 @@ def append_last_n_days():
         print(f"[{clean_base_name}] Writing merged: {len(merged):,} rows -> {existing.name}")
         write_atomic(merged, existing, sheet_name=clean_base_name)
 
+
 # ===== Main =====
 def main():
+    update_hub_and_spoke_month_label()
     update_latest_fixed_names()  # replace dated reports (drop date in Clean name)
     append_last_n_days()         # append last N days (with custom logic for Notes & Visits)
 

@@ -265,11 +265,35 @@ def _pick_target_for_metric(r: pd.Series, metric: str, am: dict[str, list[str]])
                 return float(v)
     return None
 
-def build_fc_blocks(main_table: pd.DataFrame, targets_norm: pd.DataFrame, out_csv: Path) -> pd.DataFrame:
+def build_fc_blocks(
+    main_table: pd.DataFrame,
+    targets_norm: pd.DataFrame,
+    out_csv: Path,
+    fc_totals_override: dict[str, dict[str, float]] | None = None,  # NEW (optional)
+) -> pd.DataFrame:
+    """
+    Build OHRS blocks per Functional Center and write to CSV.
+
+    fc_totals_override (optional):
+        A nested dict allowing FC-level YTD overrides per metric.
+        Shape: { "<MetricName>": { "<Functional Center>": <float YTD value>, ... }, ... }
+        Example for de-duped Individuals Served:
+            {
+              "Individuals Served": {
+                "7250976 - Case Management": 812.0,
+                "725107620 - ACTT": 423.0,
+                ...
+              }
+            }
+    """
     sw = SheetWriter(out_csv)
 
     # targets lookup
-    t_lookup = targets_norm.set_index("Functional Center", drop=False) if targets_norm is not None and not targets_norm.empty else None
+    t_lookup = (
+        targets_norm.set_index("Functional Center", drop=False)
+        if targets_norm is not None and not targets_norm.empty
+        else None
+    )
 
     # process FCs in appearance order
     for fc, g in main_table.groupby("Functional Center", sort=False):
@@ -280,9 +304,10 @@ def build_fc_blocks(main_table: pd.DataFrame, targets_norm: pd.DataFrame, out_cs
         present = [m for m in order if m in g.columns]
 
         # Keep metrics that either have any nonzero YTD or have a target
-        keep = []
+        keep: list[str] = []
         r_target = t_lookup.loc[fc] if (t_lookup is not None and fc in t_lookup.index) else None
         am = _target_alias_map_for_fc(fc)
+
         for m in present:
             body_sum = pd.to_numeric(g[m], errors="coerce").sum()
             has_target = False
@@ -306,7 +331,10 @@ def build_fc_blocks(main_table: pd.DataFrame, targets_norm: pd.DataFrame, out_cs
         body = g2.loc[keep_mask].reset_index(drop=True)
 
         # Row labels = programs + totals + target + remaining
-        row_labels = body["Program"].tolist() + ["Year to Date total", f"{fc.split(' - ', 1)[-1]} Fiscal Year Target", f"{fc.split(' - ', 1)[-1]} Remaining"]
+        row_labels = (
+            body["Program"].tolist()
+            + ["Year to Date total", f"{fc.split(' - ', 1)[-1]} Fiscal Year Target", f"{fc.split(' - ', 1)[-1]} Remaining"]
+        )
         start_r = sw.write_section(fc, display_headers, row_labels)
 
         # 1) Body rows
@@ -317,33 +345,44 @@ def build_fc_blocks(main_table: pd.DataFrame, targets_norm: pd.DataFrame, out_cs
         # 2) YTD totals row (wrap numbers in square brackets)
         ytd_row_idx = start_r + len(body)
         for j, m in enumerate(keep, start=1):
+            # default: sum of program values
             ytd_val = pd.to_numeric(g[m], errors="coerce").sum()
-            vtxt = _fmt_cell(ytd_val)           # formats to "-", or integer string
-            if vtxt != "-":                     # wrap only real numbers; keep "-" as-is
+
+            # OVERRIDE for FC-level totals (e.g., Individuals Served)
+            if fc_totals_override and m in fc_totals_override and fc in fc_totals_override[m]:
+                ytd_val = float(fc_totals_override[m][fc])
+
+            vtxt = _fmt_cell(ytd_val)
+            if vtxt != "-":
                 vtxt = f"[{vtxt}]"
             sw.write_val(ytd_row_idx, j, vtxt)
-
 
         # 3) Target & 4) Remaining rows
         tgt_row_idx = ytd_row_idx + 1
         rem_row_idx = ytd_row_idx + 2
-        
-        totals_by_metric = {m: pd.to_numeric(g[m], errors="coerce").sum() for m in keep}
+
+        # Build totals used for Remaining% (must match the YTD row value)
+        totals_by_metric: dict[str, float] = {}
+        for m in keep:
+            total_val = pd.to_numeric(g[m], errors="coerce").sum()
+            if fc_totals_override and m in fc_totals_override and fc in fc_totals_override[m]:
+                total_val = float(fc_totals_override[m][fc])
+            totals_by_metric[m] = total_val
+
         for j, m in enumerate(keep, start=1):
             tv = _pick_target_for_metric(r_target, m, am) if r_target is not None else None
-        
+
             # Wrap Fiscal Year Target values in { }  (keep "-" as-is)
             vtxt = _fmt_cell(tv)
             if vtxt != "-":
                 vtxt = f"{{{vtxt}}}"   # double braces give literal { } in f-strings
-        
             sw.write_val(tgt_row_idx, j, vtxt)
-        
-            # Remaining stays the same
+
+            # Remaining uses totals_by_metric (already override-aware)
             sw.write_val(rem_row_idx, j, percent_remaining_signed(totals_by_metric[m], tv))
 
-
     return sw.finalize()
+
 
 # =========================
 #            RUN
@@ -405,52 +444,74 @@ def run(output_path: Optional[Path | str] = None) -> pd.DataFrame:
     )
     pivot = pivot.drop(columns=["Attendance Days Face to Face","Attendance Days Non Face to Face"], errors="ignore")
 
-    # Rename MIS variants to canonical names
-    rename_map = {
-        "Service Provider Interactions": "Service Provider Interactions",
-        "Service Provider Group Interactions": "Service Provider Group Interactions",
-        "Group Session": "Group Session",
-        "Group Participants": "Group Participants",
-        "Resident Days": "Resident Days",
-        "Individuals Served by Org": "Individuals Served",
-        "Individuals Serviced": "Individuals Served",
-    }
-    for k, v in rename_map.items():
-        if k in pivot.columns and v != k:
-            if v in pivot.columns:
-                pivot[v] = pivot[v].fillna(0) + pivot[k].fillna(0)
-                pivot = pivot.drop(columns=[k])
-            else:
-                pivot = pivot.rename(columns={k: v})
+    # -------------------------
+# Canonicalize MIS columns
+# -------------------------
 
-    # Add Visits (from rpt_ProgStaffFinance)
+# 1) Individuals Served: prefer "Individuals Serviced", else "Individuals Served by Org"
+    if "Individuals Serviced" in pivot.columns:
+        pivot["Individuals Served"] = pd.to_numeric(pivot["Individuals Serviced"], errors="coerce").fillna(0)
+    elif "Individuals Served by Org" in pivot.columns:
+        pivot["Individuals Served"] = pd.to_numeric(pivot["Individuals Served by Org"], errors="coerce").fillna(0)
+    else:
+        pivot["Individuals Served"] = 0
+
+    # Drop the raw MIS Individuals columns to avoid accidental use later
+    pivot = pivot.drop(columns=[c for c in ["Individuals Serviced", "Individuals Served by Org"] if c in pivot.columns])
+
+    # 2) (Optional) Rename any other known aliases WITHOUT summing
+    #    (Nothing else needs aliasing here—MIS uses canonical names for other metrics—
+    #     but leaving an example if you ever add an alias.)
+    other_renames = {
+        # "Some Alias": "Canonical Name",
+    }
+    for src, dst in other_renames.items():
+        if src in pivot.columns and src != dst:
+            if dst not in pivot.columns:
+                pivot = pivot.rename(columns={src: dst})
+            else:
+                # If both somehow exist, keep dst and drop src (no adding)
+                pivot = pivot.drop(columns=[src])
+
+
+    # =========================
+    # Add Visits (from rpt_ProgStaffFinance) — FY window & all logic based on Interaction Start Date
+    # =========================
     cands = sorted(TREAT_CLEAN.glob("rpt_ProgStaffFinance.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cands:
         raise FileNotFoundError("No 'rpt_ProgStaffFinance.csv' found in Clean Data\\Treat")
     df_progress = read_csv(cands[0], dtype={"ID": "string"})
 
-    d = pd.to_datetime(df_progress["Note Date"], format="%m/%d/%Y", errors="coerce")
-    d = d.fillna(pd.to_datetime(df_progress["Note Date"], errors="coerce"))
+    # Fiscal year window (Interaction Start Date)
+    int_dt = pd.to_datetime(df_progress["Interaction Start Date"], errors="coerce")
     apr1_this_year = pd.Timestamp(today.year, 4, 1)
     fy_start = apr1_this_year if today >= apr1_this_year else pd.Timestamp(today.year - 1, 4, 1)
-    mask = (d >= fy_start) & (d <= today)
+    mask = (int_dt >= fy_start) & (int_dt <= today)
+
+    # Slice for Individuals Served (unique per FC) and Visits (de-dupe by type/day)
+    df_clients_fy = df_progress.loc[mask, ["ClientName", "Program"]].copy()
     df_progress_fy = df_progress.loc[mask].copy()
 
-    # Visits per Program (dedupe client+date+visit type+program)
-    tmp_date = pd.to_datetime(df_progress_fy["Interaction Start Date"], errors="coerce").dt.normalize()
-    df_progress_fy = df_progress_fy.assign(_date_only=tmp_date)
+    # --- Visits: one per (Client, Interaction-Day, Visit Type), across all programs ---
+    df_progress_fy["Interaction Start Date"] = pd.to_datetime(df_progress_fy["Interaction Start Date"], errors="coerce")
+    df_progress_fy["_day"] = df_progress_fy["Interaction Start Date"].dt.normalize()
+
+    df_progress_fy["ClientName"] = df_progress_fy["ClientName"].astype(str).str.strip()
+    df_progress_fy["Visit Type"] = df_progress_fy["Visit Type"].astype(str).str.strip().replace({"": "Unknown"})
+
     df_progress_fy = (
         df_progress_fy
-        .sort_values(["ClientName", "_date_only", "Visit Type", "Program"])
-        .drop_duplicates(subset=["ClientName","_date_only","Visit Type","Program"], keep="first")
-        .drop(columns="_date_only")
+        .drop_duplicates(subset=["ClientName", "_day", "Visit Type"], keep="first")
         .reset_index(drop=True)
     )
+
+    # Visits per Program
     df_prog_visits = (
         df_progress_fy.groupby("Program", dropna=False).size()
         .reset_index(name="Visits")
     )
 
+    # Merge visits into main_table
     main_table = pivot.merge(df_prog_visits, how="left", on="Program").fillna(0)
 
     # Ensure ints
@@ -482,9 +543,9 @@ def run(output_path: Optional[Path | str] = None) -> pd.DataFrame:
     fc_Crisis   = ["COSS Follow Up","COSS Crisis","FOCUS","JAM","Prevention CM"]
     fc_FAME     = ["FAME","FAME Group","FAMEKids","FAMEKids Group"]
     fc_STCB     = ["STCB"]                 # Safe Beds
-    fc_COPA     = ["COPA","ASH/COPA","ASH/COPA Skill Group"]  # Addictions
+    fc_COPA     = ["COPA","ASH/COPA","ASH/COPA Skill Group","COPA SMART Recovery Group"]  # Addictions
 
-    fc_map = {}
+    fc_map: dict[str, str] = {}
     fc_map.update({p: "725107620 - ACTT" for p in fc_ACTT})
     fc_map.update({p: "7250976 - Case Management" for p in fc_CM})
     fc_map.update({p: "725107655 - Forensic CM" for p in fc_Forensic})
@@ -493,16 +554,20 @@ def run(output_path: Optional[Path | str] = None) -> pd.DataFrame:
     fc_map.update({p: "725097811 - Addictions" for p in fc_COPA})
     fc_map.update({p: "725517620 - Family Initiatives" for p in fc_FAME})
 
+    # Map Program -> FC for main_table
     main_table["Program"] = main_table["Program"].astype(str).str.strip()
     main_table["Functional Center"] = main_table["Program"].map(lambda x: fc_map.get(x, "")).fillna("")
     main_table = main_table[main_table["Functional Center"] != ""].reset_index(drop=True)
 
+
     # Targets
     targets_norm = _parse_targets_csv(TARGETS_CSV)
 
-    # Build and save the block table
     df_out = build_fc_blocks(main_table, targets_norm, OUTPUT_CSV)
+
     return df_out
+
+
 
 # =========================
 #           MAIN

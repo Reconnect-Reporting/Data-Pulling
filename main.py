@@ -1,4 +1,4 @@
-# main.py (PySide6 version with tabs + responsive flow + Setup tab w/ deps installer)
+# main.py (PySide6 version with tabs + popup output window)
 
 # -*- coding: utf-8 -*-
 # ==== Auto_reports_pulling ====
@@ -72,7 +72,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QLabel, QLineEdit, QPushButton, QCheckBox, QScrollArea, QFrame,
     QProgressBar, QPlainTextEdit, QGridLayout,
     QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPixmapItem,
-    QGraphicsPathItem, QGraphicsDropShadowEffect,QComboBox,QCheckBox,QSplitter
+    QGraphicsPathItem, QGraphicsDropShadowEffect, QComboBox, QCheckBox, QSplitter
 )
 
 # COM (Outlook/Excel) init for worker threads
@@ -90,7 +90,7 @@ class DependencyInstaller:
         "pywin32": "pywin32",                  # replaces win32com.client
         "selenium": "selenium",
         "webdriver_manager": "webdriver-manager",
-    
+
         # Optional but used
         "glob": "glob2",                       # stdlib glob exists, but pip package is glob2 if needed
         "typing_extensions": "typing-extensions",  # for Optional, Iterable, etc. (if backport needed)
@@ -209,17 +209,19 @@ def _apply_trapeze_env(username: str, password: str) -> None:
 
 # ------------------ PIPELINE STEPS ------------------
 STEPS = [
-    ("clean",  "[1/11] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
-    ("treat",  "[2/11] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
-    ("move",   "[3/11] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
-    ("alaya",  "[4/11] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),
-    ("caredove","[5/11] Pulling Caredove Reports",         "Auto_reports_pulling.Caredove_Pulling"),
-    ("trapeze","[6/11] Pulling Trapeze Reports",           "Auto_reports_pulling.Trapeze_Report_Pulling"),
-    ("cmove",  "[7/11] Moving Caredove Files to OneDrive", "Data_Pipeline.Caredove_File_Moving"),
-    ("tclean", "[8/11] Cleaning Treat Data",               "Data_Pipeline.Treat_Data_Cleaning"),
-    ("aclean", "[9/11] Cleaning AlayaCare Data",           "Data_Pipeline.AlayaCare_Data_Cleaning"),
-    ("cclean", "[10/11] Cleaning Caredove Data",           "Data_Pipeline.Caredove_Data_Cleaning"),
-    ("report_dashboard","[11/11] Refreshing Dashboards", [
+    ("clean",  "[1/13] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
+    ("treat",  "[2/13] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
+    ("move",   "[3/13] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
+    ("alaya",  "[4/13] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),
+    ("caredove","[5/13] Pulling Caredove Reports",         "Auto_reports_pulling.Caredove_Pulling"),
+    ("trapeze","[6/13] Pulling Trapeze Reports",           "Auto_reports_pulling.Trapeze_Report_Pulling"),
+    ("cmove",  "[7/13] Moving Caredove Files to OneDrive", "Data_Pipeline.Caredove_File_Moving"),
+    ("tclean", "[8/13] Cleaning Treat Data",               "Data_Pipeline.Treat_Data_Cleaning"),
+    ("anclean", "[9/13] Cleaning AlayaCare Note Data",     "Data_Pipeline.AlayaCare_Data_Note_Cleaning"),
+    ("aclean", "[10/13] Cleaning AlayaCare Data",          "Data_Pipeline.AlayaCare_Data_Cleaning"),
+    ("cclean", "[11/13] Cleaning Caredove Data",           "Data_Pipeline.Caredove_Data_Cleaning"),
+    ("map_refresh", "[12/13] Refreshing ACTT Team Map",    "Data_Pipeline.ACTT_team_Map_Refreshing"),
+    ("report_dashboard","[13/13] Refreshing Dashboards", [
         "Reports.OHRS_MHA",
         "Reports.OHRS_SFS",
         "Reports.Client_enroll_in_multiple_programs"
@@ -232,17 +234,17 @@ REPORTS = [
     ("fame", "CMHA Peel – FAME Monthly (save to Downloads)", "Reports.FAME_Report","monthly"),
     ("jam",  "JAM Report (Save to Downloads)", "Reports.JAM_Report","monthly"),
     ("ocan","Overdue OCAN List (Save to Downloads)", "Reports.Overdue_OCAN_List","monthly"),
-    ("cwcd","CWCD (show in Output Table)", "Reports.CWCD","monthly"),
-    ("uhn",  "UHN Geri Psych (show in Output Table)", "Reports.UHN_GeriPsych","monthly"),
-    ("rass",  "RASS (show in Output Table)", "Reports.RASS","monthly"),
-    ("ohrs", "OHRS_MHA (show in Output Table and Refresh Dashboard)", "Reports.OHRS_MHA","daily"),
-    ("ohrs_sfs", "OHRS_SFS (show in Output Table and Refresh Dashboard)", "Reports.OHRS_SFS","daily"),
+    ("cwcd","CWCD (open in new window)", "Reports.CWCD","monthly"),
+    ("uhn",  "UHN Geri Psych (open in new window)", "Reports.UHN_GeriPsych","monthly"),
+    ("rass",  "RASS (open in new window)", "Reports.RASS","monthly"),
+    ("ohrs", "OHRS_MHA (open in new window and Refresh Dashboard)", "Reports.OHRS_MHA","daily"),
+    ("ohrs_sfs", "OHRS_SFS (open in new window and Refresh Dashboard)", "Reports.OHRS_SFS","daily"),
     ("consent_missing", "List of Outstanding consents (Save to Downloads)", "Reports.List_of_outstanding_consent","monthly"),
-    ("client_in_multiple_programs","Client Enroll in Multiple Programs (show in Output Table and Refresh Dashboard)","Reports.Client_enroll_in_multiple_programs","daily"),
-    ("vhs", "VHA (show in Output Table)", "Reports.VHA","monthly"),
-    ("geri hub", "Geri Hub Report (show in Output Table)", "Reports.Geri_Hub_Report","monthly"),
-    ("ipc", "IPC Report (show in Output Table)", "Reports.IPC_Report","monthly"),
-    ("coss", "COSS Report (show in Output Table)", "Reports.COSS_Report","monthly"),
+    ("client_in_multiple_programs","Client Enroll in Multiple Programs (open in new window and Refresh Dashboard)","Reports.Client_enroll_in_multiple_programs","daily"),
+    ("vhs", "VHA (open in new window)", "Reports.VHA","monthly"),
+    ("geri hub", "Geri Hub Report (open in new window)", "Reports.Geri_Hub_Report","monthly"),
+    ("ipc", "IPC Report (open in new window)", "Reports.IPC_Report","monthly"),
+    ("coss", "COSS Report (open in new window)", "Reports.COSS_Report","monthly"),
     ("trapeze", "Trapeze Report (Save to Downloads)", "Reports.Trapeze_Report","weekly")
 ]
 
@@ -253,7 +255,6 @@ STATUS_COLORS = {
     "fail":    "#b54708",
 }
 
-# ---------- Visual labels for the flow nodes (not the row titles) ----------
 FLOW_LABELS = {
     "clean": "Clean Folder",
     "treat_box": "Treat",
@@ -264,14 +265,12 @@ FLOW_LABELS = {
     "email": "Email Inbox",
     "caredove": "CareDove",
     "caredove_dl": "Downloads",
-    "Trapeze": "Trapeze",        # <-- use 'Trapeze' consistently
+    "Trapeze": "Trapeze",
     "trapeze_dl": "Downloads",
     "PowerBI": "Power BI",
     "reports": "Reports ready",
 }
 
-
-# Map pipeline step -> which node(s) should light up
 STEP_NODE_MAP = {
     "clean":  ["clean"],
     "treat":  ["treat_box","downloads"],
@@ -282,19 +281,15 @@ STEP_NODE_MAP = {
     "caredove":["caredove","caredove_dl"],
     "cmove":["raw"],
     "cclean":["clean_data"],
-    "trapeze": ["Trapeze", "trapeze_dl"], 
+    "trapeze": ["Trapeze", "trapeze_dl"],
     "report_dashboard": ["PowerBI", "reports"],
-
 }
 
-# Which edges should change per pipeline step
 STEP_EDGE_MAP = {
-    # after CLEAN finishes, light up all four outgoing edges from 'clean'
     "clean":  [("clean","treat_box"),
                ("clean","alayacare"),
                ("clean","caredove"),
                ("clean","Trapeze")],
-
     "treat":  [("treat_box", "downloads")],
     "move":   [("downloads", "raw")],
     "alaya":  [("alayacare", "email"), ("email","raw")],
@@ -303,12 +298,10 @@ STEP_EDGE_MAP = {
     "caredove":[("caredove","caredove_dl")],
     "cmove":  [("caredove_dl","raw")],
     "cclean":[("raw", "clean_data")],
-    # keep node key consistent: use 'Trapeze' everywhere
     "trapeze": [("Trapeze","trapeze_dl"), ("trapeze_dl","raw")],
     "report_dashboard": [("clean_data","PowerBI"), ("clean_data","reports")]
 }
 
-# All edges in the diagram (used for resetting)
 ALL_EDGES = [
     ("clean","treat_box"),
     ("clean","alayacare"),
@@ -348,7 +341,6 @@ def _get_runner(module_spec):
             raise AttributeError(f"{modname} has no callable run() or main().")
         return fn
 
-    # multiple modules
     if isinstance(module_spec, (list, tuple)):
         fns = [_import_runner(m) for m in module_spec]
 
@@ -357,18 +349,13 @@ def _get_runner(module_spec):
                 fn()
         return run_all
 
-    # single module
     if isinstance(module_spec, str):
         return _import_runner(module_spec)
 
     raise TypeError(f"Unsupported module spec type: {type(module_spec).__name__}")
 
-
-# ------------------ Qt FlowView with optional picture nodes ------------------
-# ------------------ Qt FlowView with optional picture nodes ------------------
+# ------------------ Qt FlowView ------------------
 class FlowView(QGraphicsView):
-
-    # --- Responsive layout baseline (used only as a fallback) ---
     DESIGN_W = 4000
     DESIGN_H = 600
 
@@ -381,22 +368,22 @@ class FlowView(QGraphicsView):
     }
 
     BASE_NODE_POS = {
-        "clean": (180, 335),
-        "treat_box": (900, 10),
-        "alayacare": (900, 220),
-        "downloads": (1500, 10),
-        "email": (1500, 220),
-        "raw": (1950, 335),
-        "clean_data": (2400, 335),
-        "caredove": (900, 450),
-        "caredove_dl": (1500, 450),
-        "Trapeze": (900, 650),
-        "trapeze_dl": (1500, 650),
-        "PowerBI": (2900, 150),
-        "reports": (2900, 520),
+        "clean": (100, 335),
+        "treat_box": (770, 10),
+        "alayacare": (770, 220),
+        "downloads": (1370, 10),
+        "email": (1370, 220),
+        "raw": (1820, 335),
+        "clean_data": (2270, 335),
+        "caredove": (770, 450),
+        "caredove_dl": (1370, 450),
+        "Trapeze": (770, 650),
+        "trapeze_dl": (1370, 650),
+        "PowerBI": (2770, 150),
+        "reports": (2770, 520),
     }
 
-    SCENE_PADDING = 60  # extra breathing room
+    SCENE_PADDING = 60
 
     def __init__(self, parent=None, icons_dir: Path | None = None):
         super().__init__(parent)
@@ -406,23 +393,23 @@ class FlowView(QGraphicsView):
         self.setRenderHint(QPainter.TextAntialiasing, True)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setFrameShape(QFrame.NoFrame)
-        self.setMinimumHeight(300)
-
+        self.setMinimumHeight(150)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setInteractive(False)
         self.icons_dir = icons_dir or (Path(__file__).resolve().parent / "icons")
 
-        # state storage
-        self._nodes: dict = {}   # key -> {"pix": item, "bbox": (x0,y0,x1,y1), "effect": effect}
-        self._edges: list = []   # list of dicts per edge
+        self._nodes: dict = {}
+        self._edges: list = []
         self._states = {
             "clean": "pending", "treat_box": "pending", "alayacare": "pending",
             "downloads": "pending", "email": "pending", "raw": "pending", "clean_data": "pending",
         }
 
-        # compute dynamic design bounds before first rebuild
         self._ensure_design_bounds()
         self.rebuild()
 
-    # ---------- bounds helpers ----------
     def _compute_design_bounds(self) -> tuple[float, float]:
         minx = miny = float("inf")
         maxx = maxy = float("-inf")
@@ -441,7 +428,6 @@ class FlowView(QGraphicsView):
         if not hasattr(self, "_design_w") or not hasattr(self, "_design_h"):
             self._design_w, self._design_h = self._compute_design_bounds()
 
-    # ---------- responsive helpers ----------
     def _scale_factor(self) -> float:
         self._ensure_design_bounds()
         vw = max(1, self.viewport().width()  - 2*self.SCENE_PADDING)
@@ -459,7 +445,6 @@ class FlowView(QGraphicsView):
         x, y = self.BASE_NODE_POS[key]
         return (x * s, y * s)
 
-    # ---------- utilities ----------
     def _icon_for(self, key: str) -> QPixmap | None:
         p = self.icons_dir / f"{key}.png"
         if p.exists():
@@ -472,24 +457,25 @@ class FlowView(QGraphicsView):
         size_px = int(max(24, min(2048, size_px)))
         return pm.scaled(QSize(size_px, size_px), Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-    # ---------- node/edge drawing ----------
     def _add_node_image(self, key: str, cx: float, cy: float, size_px: int):
         pm = self._icon_for(key)
         if pm is None:
-            pm = QPixmap(size_px, size_px); pm.fill(QColor("#e8e8e8"))
+            pm = QPixmap(size_px, size_px)
+            pm.fill(QColor("#e8e8e8"))
         spm = self._scaled(pm, size_px)
         pix = QGraphicsPixmapItem(spm)
         pix.setZValue(10)
         self._scene.addItem(pix)
 
-        # center at (cx, cy)
         x = cx - spm.width() / 2
         y = cy - spm.height() / 2
         pix.setPos(x, y)
         bbox = (x, y, x + spm.width(), y + spm.height())
 
         eff = QGraphicsDropShadowEffect()
-        eff.setBlurRadius(0); eff.setOffset(0, 0); eff.setColor(QColor(0, 0, 0, 0))
+        eff.setBlurRadius(0)
+        eff.setOffset(0, 0)
+        eff.setColor(QColor(0, 0, 0, 0))
         pix.setGraphicsEffect(eff)
 
         self._nodes[key] = {"pix": pix, "bbox": bbox, "effect": eff}
@@ -502,8 +488,10 @@ class FlowView(QGraphicsView):
         return start, end
 
     def _edge_state_color(self, state: str) -> QColor:
-        if state in ("running", "done"): return QColor("#18794e")
-        if state == "fail":              return QColor("#b54708")
+        if state in ("running", "done"):
+            return QColor("#18794e")
+        if state == "fail":
+            return QColor("#b54708")
         return QColor("#888")
 
     def _apply_edge_pen(self, e, color: QColor, width: int = 4):
@@ -521,7 +509,6 @@ class FlowView(QGraphicsView):
                 col = self._edge_state_color(state)
                 self._apply_edge_pen(e, col, width=4)
 
-                # steady glow (no animation)
                 for eff_key in ("path_effect", "head_effect"):
                     eff = e.get(eff_key)
                     if eff is None:
@@ -534,15 +521,15 @@ class FlowView(QGraphicsView):
                         e[eff_key] = eff
 
                     if state == "pending":
-                        eff.setBlurRadius(0); eff.setColor(QColor(0, 0, 0, 0))
+                        eff.setBlurRadius(0)
+                        eff.setColor(QColor(0, 0, 0, 0))
                     else:
-                        eff.setBlurRadius(20); eff.setColor(col)
+                        eff.setBlurRadius(20)
+                        eff.setColor(col)
                 break
 
     def _add_arrow(self, from_key, to_key):
         start, end = self._arrow_points(from_key, to_key)
-
-        # Cubic curve for a nicer arrow
         dx = (end.x() - start.x())
         c1 = QPointF(start.x() + dx * 0.35, start.y())
         c2 = QPointF(end.x()   - dx * 0.35, end.y())
@@ -559,8 +546,7 @@ class FlowView(QGraphicsView):
         path_item.setZValue(5)
         self._scene.addItem(path_item)
 
-        # arrowhead aligned with tangent
-        tangent = path.angleAtPercent(1.0)  # degrees
+        tangent = path.angleAtPercent(1.0)
         head_len = 16
         head_wid = 8
         base = end
@@ -585,29 +571,24 @@ class FlowView(QGraphicsView):
             "head_effect": None,
         })
 
-    # ---------- build / rebuild ----------
     def rebuild(self):
         self._scene.clear()
         self._nodes.clear()
         self._edges.clear()
 
-        # Recompute dynamic design bounds each time (in case layout changed)
         self._design_w, self._design_h = self._compute_design_bounds()
         s = self._scale_factor()
 
-        # Scene rect sized to dynamic design, with padding
         pad = self.SCENE_PADDING
         scene_w = self._design_w * s
         scene_h = self._design_h * s
         self._scene.setSceneRect(-pad, -pad, scene_w + 2*pad, scene_h + 2*pad)
 
-        # place nodes using scaled positions & sizes
         for key in self.BASE_NODE_POS.keys():
             cx, cy = self._scaled_pos(key, s)
             size_px = self._scaled_icon_size(key, s)
             self._add_node_image(key, cx, cy, size_px)
 
-        # arrows (same logical flow)
         self._add_arrow("clean", "treat_box")
         self._add_arrow("clean", "alayacare")
         self._add_arrow("clean", "caredove")
@@ -624,7 +605,6 @@ class FlowView(QGraphicsView):
         self._add_arrow("clean_data", "PowerBI")
         self._add_arrow("clean_data", "reports")
 
-        # re-apply saved states (steady glow)
         for k, st in self._states.items():
             self._apply_state(k, st)
 
@@ -632,13 +612,13 @@ class FlowView(QGraphicsView):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # Keep full rebuild (you scale positions & sizes yourself)
         QTimer.singleShot(0, self.rebuild)
 
-    # ---------- node state (steady glow) ----------
     def _state_color(self, state: str) -> QColor:
-        if state in ("running", "done"): return QColor("#18794e")   # GREEN
-        if state == "fail":              return QColor("#b54708")
+        if state in ("running", "done"):
+            return QColor("#18794e")
+        if state == "fail":
+            return QColor("#b54708")
         return QColor(0, 0, 0, 0)
 
     def _apply_state(self, key, state):
@@ -649,14 +629,14 @@ class FlowView(QGraphicsView):
         eff: QGraphicsDropShadowEffect = node["effect"]
         col = self._state_color(state)
         if state == "pending":
-            eff.setBlurRadius(0); eff.setColor(QColor(0, 0, 0, 0))
+            eff.setBlurRadius(0)
+            eff.setColor(QColor(0, 0, 0, 0))
         else:
-            eff.setBlurRadius(28); eff.setColor(col)
+            eff.setBlurRadius(28)
+            eff.setColor(col)
 
-    # external API used by MainWindow
     def set_node_state(self, key, state):
         self._apply_state(key, state)
-
 
 class PandasModel(QAbstractTableModel):
     def __init__(self, df: pd.DataFrame, parent=None):
@@ -675,16 +655,14 @@ class PandasModel(QAbstractTableModel):
 
         val = self._df.iat[index.row(), index.column()]
 
-        # 🔒 Hide empties: NaN/None/NA or the literal string "nan"
         if pd.isna(val) or (isinstance(val, str) and val.strip().lower() == "nan"):
             return ""
 
-        # nice display for floats/ints
         if isinstance(val, float):
             try:
                 return f"{val:.0f}" if float(val).is_integer() else f"{val:.2f}"
             except Exception:
-                return ""  # just in case val was a weird float-like
+                return ""
 
         return str(val)
 
@@ -696,29 +674,48 @@ class PandasModel(QAbstractTableModel):
         else:
             return str(self._df.index[section])
 
+class DataFrameWindow(QMainWindow):
+    def __init__(self, df: pd.DataFrame, title: str = "Output", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(1100, 700)
+
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        self.table = QTableView(self)
+        self.table.setModel(PandasModel(df))
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(True)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableView.SelectRows)
+        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.setWordWrap(False)
+        self.table.setCornerButtonEnabled(False)
+
+        layout.addWidget(self.table)
 
 # ------------------ Main Window ------------------
 class MainWindow(QMainWindow):
     def _reset_visuals(self):
-        # reset rows
         for k, r in self.step_rows.items():
             r["status"].setText("Pending")
             r["status"].setStyleSheet(f"color:{STATUS_COLORS['pending']};")
-        # reset nodes
         for node_key in FLOW_LABELS:
             self.flow.set_node_state(node_key, "pending")
-        # reset edges
         for a, b in ALL_EDGES:
             self.flow.set_edge_state(a, b, "pending")
-
 
     def start_checked_steps(self):
         if self.running:
             return
-        # collect the subset in pipeline order
         subset = [(k,t,m) for (k,t,m) in STEPS if self.step_checks.get(k) and self.step_checks[k].isChecked()]
         if not subset:
-            self._log("No steps checked."); 
+            self._log("No steps checked.")
             return
 
         self._reset_visuals()
@@ -726,23 +723,22 @@ class MainWindow(QMainWindow):
         self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
         self.btn_run_checked.setEnabled(False); self.btn_run_checked.setText("Running…")
         threading.Thread(target=run_pipeline, args=(self, subset, True), daemon=True).start()
-    
-    def _show_dataframe(self, df: pd.DataFrame):
-        self.out_table.setModel(PandasModel(df))
-        # Jump to the Output tab so the user sees the result immediately
-        if hasattr(self, "tab_out"):
-            self.tabs.setCurrentWidget(self.tab_out)
 
-    
+    def _show_dataframe(self, df: pd.DataFrame, title: str = "Output"):
+        win = DataFrameWindow(df, title=title, parent=self)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        self.output_windows.append(win)
+
     def preview_cwcd_pivot(self):
         try:
             import Reports.CWCD as cwcd
-            df = cwcd.run()  # uses your existing transformation
-            self._show_dataframe(df)
-            self._log("CWCD pivot built and rendered in Output Table.")
+            df = cwcd.run()
+            self._show_dataframe(df, title="CWCD")
+            self._log("CWCD pivot built and opened in a new window.")
         except Exception as e:
             self._log(f"Error building CWCD pivot: {e}")
-
 
     def _toggle_creds(self):
         self.creds_group.setVisible(not self.creds_group.isVisible())
@@ -752,9 +748,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Daily Automation")
         self.resize(1200, 800)
         icon_path = Path(__file__).with_name("app.ico")
-        if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
-        # settings/env
         self.settings = _load_settings()
         if "TREAT_USERNAME" in self.settings:
             os.environ["TREAT_USERNAME"] = self.settings["TREAT_USERNAME"]
@@ -769,11 +765,10 @@ class MainWindow(QMainWindow):
         if "TRAPEZE_PASSWORD" in self.settings:
             os.environ["TRAPEZE_PASSWORD"] = self.settings["TRAPEZE_PASSWORD"]
 
-        # thread queue
         self.q = queue.Queue()
         self.running = False
+        self.output_windows = []
 
-        # --- central layout ---
         central = QWidget(self)
         self.setCentralWidget(central)
         v = QVBoxLayout(central)
@@ -785,20 +780,16 @@ class MainWindow(QMainWindow):
 
         self.tab_auto  = QWidget()
         self.tab_rep   = QWidget()
-        self.tab_out   = QWidget()   # NEW: Output tab
+        self.tab_211   = QWidget()
 
         self.tabs.addTab(self.tab_auto,  "Data Automation")
         self.tabs.addTab(self.tab_rep,   "Reports")
-        self.tabs.addTab(self.tab_out,   "Output")   # NEW
+        self.tabs.addTab(self.tab_211,   "211 Find Help")
 
-
-        # ---- Data Automation tab ----
         auto_layout = QVBoxLayout(self.tab_auto)
         auto_layout.setSpacing(8)
 
-        # Header with Run
         hdr = QHBoxLayout()
-
         back_lbl = QLabel("Data Automation")
         back_lbl.setStyleSheet("font-size:18px; font-weight:600;")
         hdr.addWidget(back_lbl)
@@ -812,20 +803,17 @@ class MainWindow(QMainWindow):
         self.btn_run.clicked.connect(self.start_pipeline)
         hdr.addWidget(self.btn_run)
 
-        # 🔽 Toggle Treat credentials
         self.btn_toggle_creds = QPushButton("Update Credentials")
         self.btn_toggle_creds.clicked.connect(self._toggle_creds)
         hdr.addWidget(self.btn_toggle_creds)
 
         auto_layout.addLayout(hdr)
 
-        # Credentials (Treat + Caredove) - toggled by the button
         self.creds_group = QGroupBox("Credentials")
         gl = QGridLayout(self.creds_group)
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(3, 1)
 
-        # --- Treat ---
         treat_title = QLabel("<b>Treat</b>")
         gl.addWidget(treat_title, 0, 0, 1, 5)
 
@@ -836,9 +824,6 @@ class MainWindow(QMainWindow):
         gl.addWidget(QLabel("Username"), 1, 0); gl.addWidget(self.in_user, 1, 1)
         gl.addWidget(QLabel("Password"), 1, 2); gl.addWidget(self.in_pass, 1, 3)
 
-
-
-        # --- Caredove ---
         caredove_title = QLabel("<b>Caredove</b>")
         gl.addWidget(caredove_title, 3, 0, 1, 5)
 
@@ -849,30 +834,23 @@ class MainWindow(QMainWindow):
         gl.addWidget(QLabel("Email"),    4, 0); gl.addWidget(self.cd_email, 4, 1)
         gl.addWidget(QLabel("Password"), 4, 2); gl.addWidget(self.cd_pass,  4, 3)
 
-        # --- Trapeze ---
         trapeze_title = QLabel("<b>Trapeze</b>")
         gl.addWidget(trapeze_title, 6, 0, 1, 5)
-        
+
         self.tr_user = QLineEdit(os.getenv("TRAPEZE_USERNAME", self.settings.get("TRAPEZE_USERNAME", "")))
         self.tr_pass = QLineEdit(os.getenv("TRAPEZE_PASSWORD", self.settings.get("TRAPEZE_PASSWORD", "")))
         self.tr_pass.setEchoMode(QLineEdit.Password)
-        
+
         gl.addWidget(QLabel("Username"), 7, 0); gl.addWidget(self.tr_user, 7, 1)
         gl.addWidget(QLabel("Password"), 7, 2); gl.addWidget(self.tr_pass, 7, 3)
-        
-        # Move Save button BELOW Trapeze (row 8), span all columns, right-aligned
+
         self.btn_save_creds = QPushButton("Save")
         self.btn_save_creds.clicked.connect(self._save_creds)
         gl.addWidget(self.btn_save_creds, 8, 0, 1, 5, alignment=Qt.AlignRight)
 
-
-
-        # Flow (with optional icons)
         self.flow = FlowView(self, icons_dir=Path(__file__).resolve().parent / "icons")
         auto_layout.addWidget(self.flow)
 
-        # Scrollable steps list
-        # ---------- Scrollable steps list (drop-in replacement) ----------
         steps_group = QGroupBox("Pipeline steps")
         steps_v = QVBoxLayout(steps_group)
 
@@ -882,14 +860,12 @@ class MainWindow(QMainWindow):
         steps_widget = QWidget()
         self.steps_scroll.setWidget(steps_widget)
 
-        # Create the layout BEFORE using it anywhere
         self.steps_layout = QVBoxLayout(steps_widget)
         self.steps_layout.setContentsMargins(8, 8, 8, 8)
         self.steps_layout.setSpacing(4)
 
-        # keep rows + add per-step checkboxes
         self.step_rows = {}
-        self.step_checks = {}  # key -> QCheckBox
+        self.step_checks = {}
 
         for key, title_text, module in STEPS:
             row = QWidget()
@@ -897,7 +873,6 @@ class MainWindow(QMainWindow):
             hl.setContentsMargins(0, 0, 0, 0)
             hl.setSpacing(8)
 
-            # per-step checkbox
             cb = QCheckBox()
             cb.setObjectName(f"cb_{key}")
             self.step_checks[key] = cb
@@ -906,7 +881,6 @@ class MainWindow(QMainWindow):
             lbl = QLabel(title_text)
             lbl.setMinimumWidth(600)
 
-            # Accept str or list/tuple[str]
             if isinstance(module, (list, tuple)):
                 tip = "\n".join(map(str, module))
             else:
@@ -923,7 +897,6 @@ class MainWindow(QMainWindow):
             self.steps_layout.addWidget(row)
             self.step_rows[key] = {"row": row, "label": lbl, "status": st, "checkbox": cb}
 
-        # push items to top
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.steps_layout.addWidget(spacer)
@@ -931,37 +904,17 @@ class MainWindow(QMainWindow):
         steps_v.addWidget(self.steps_scroll)
         auto_layout.addWidget(steps_group)
 
-
-
-        # Controls
         ctl = QHBoxLayout()
-        self.progress = QProgressBar(); self.progress.setRange(0,0); self.progress.setVisible(False)
-        ctl.addWidget(self.progress); ctl.addStretch(1)
+        self.progress = QProgressBar()
+        self.progress.setRange(0,0)
+        self.progress.setVisible(False)
+        ctl.addWidget(self.progress)
+        ctl.addStretch(1)
         auto_layout.addLayout(ctl)
 
-        # ---- Output tab (full-bleed table) ----
-        out_layout = QVBoxLayout(self.tab_out)
-        out_layout.setContentsMargins(0, 0, 0, 0)
-        out_layout.setSpacing(0)
-        
-        self.out_table = QTableView(self.tab_out)
-        self.out_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.out_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.out_table.horizontalHeader().setStretchLastSection(True)
-        self.out_table.verticalHeader().setVisible(False)
-        self.out_table.setSortingEnabled(True)
-        self.out_table.setAlternatingRowColors(True)
-        self.out_table.setSelectionBehavior(QTableView.SelectRows)
-        self.out_table.setSelectionMode(QTableView.SingleSelection)
-        self.out_table.setWordWrap(False)
-        self.out_table.setCornerButtonEnabled(False)
-        out_layout.addWidget(self.out_table)
-        
-        # ---- Reports tab ----
         rep_layout = QVBoxLayout(self.tab_rep)
         rep_layout.setSpacing(8)
-        
-        # Header row: title (left) + Create report(s) (right)
+
         rep_hdr = QHBoxLayout()
         rep_title = QLabel("<b>Reports</b>")
         rep_hdr.addWidget(rep_title)
@@ -970,29 +923,32 @@ class MainWindow(QMainWindow):
         self.btn_run_reports.clicked.connect(self.start_reports)
         rep_hdr.addWidget(self.btn_run_reports)
         rep_layout.addLayout(rep_hdr)
-        
-        # Split the page vertically into Daily / Weekly / Monthly
+
         splitter = QSplitter(Qt.Vertical, self.tab_rep)
         rep_layout.addWidget(splitter, 1)
-        
-        self.report_checks = {}     # key -> checkbox (define ONCE)
-        self._section_checks = {}   # cadence -> list[checkboxes]
-        
+
+        self.report_checks = {}
+        self._section_checks = {}
+
         def build_section(title: str, cadence_key: str):
             box = QGroupBox(title)
-            v = QVBoxLayout(box); v.setSpacing(6)
-        
-            # Select-all for this section
-            row = QWidget(); hl = QHBoxLayout(row); hl.setContentsMargins(0,0,0,0)
+            vbox = QVBoxLayout(box)
+            vbox.setSpacing(6)
+
+            row = QWidget()
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0,0,0,0)
             sel_all = QCheckBox("Select all in this section")
-            hl.addWidget(sel_all); hl.addStretch(1)
-            v.addWidget(row)
-        
-            # Container for the report checkboxes
-            container = QWidget(); cv = QVBoxLayout(container)
-            cv.setContentsMargins(0,0,0,0); cv.setSpacing(4)
-            v.addWidget(container, 1)
-        
+            hl.addWidget(sel_all)
+            hl.addStretch(1)
+            vbox.addWidget(row)
+
+            container = QWidget()
+            cv = QVBoxLayout(container)
+            cv.setContentsMargins(0,0,0,0)
+            cv.setSpacing(4)
+            vbox.addWidget(container, 1)
+
             checks_in_section = []
             for key, label, module, cadence in REPORTS:
                 if cadence != cadence_key:
@@ -1003,76 +959,85 @@ class MainWindow(QMainWindow):
                 cv.addWidget(cb)
                 self.report_checks[key] = cb
                 checks_in_section.append(cb)
-        
+
             def toggle_all(state):
                 on = state == Qt.Checked
                 for c in checks_in_section:
                     c.setChecked(on)
             sel_all.stateChanged.connect(toggle_all)
-        
+
             self._section_checks[cadence_key] = checks_in_section
             return box
-        
+
         daily_box   = build_section("Daily",   "daily")
         weekly_box  = build_section("Weekly",  "weekly")
         monthly_box = build_section("Monthly", "monthly")
-        
+
         splitter.addWidget(daily_box)
         splitter.addWidget(weekly_box)
         splitter.addWidget(monthly_box)
-        
-        # Optional: nicer initial splitter sizes
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 1)
 
+        layout_211 = QVBoxLayout(self.tab_211)
+        layout_211.setSpacing(8)
 
+        title_211 = QLabel("<b>211 Find Help</b>")
+        layout_211.addWidget(title_211)
 
-        # ---- Shared log at the bottom ----
+        self.pic_211 = QLabel()
+        self.pic_211.setAlignment(Qt.AlignCenter)
+
+        icons_dir = Path(__file__).resolve().parent / "icons"
+        img_path = icons_dir / "211.png"
+
+        if img_path.exists():
+            pix = QPixmap(str(img_path))
+            self.pic_211.setPixmap(pix.scaledToWidth(500, Qt.SmoothTransformation))
+        else:
+            self.pic_211.setText(f"Image not found: {img_path}")
+
+        layout_211.addWidget(self.pic_211)
+
+        self.btn_run_211 = QPushButton("Run 211 Update + Cleaning")
+        self.btn_run_211.clicked.connect(self.start_211_job)
+        layout_211.addWidget(self.btn_run_211)
+
+        layout_211.addStretch(1)
+
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(5000)
         v.addWidget(self.log, 0)
 
-        # poll the queue
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._drain_queue)
         self.timer.start(100)
 
-    # ---- creds
     def _save_creds(self):
-       # Treat
-       u = self.in_user.text().strip()
-       p = self.in_pass.text()
+        u = self.in_user.text().strip()
+        p = self.in_pass.text()
+        cd_email = self.cd_email.text().strip()
+        cd_pass  = self.cd_pass.text()
+        tr_u = self.tr_user.text().strip()
+        tr_p = self.tr_pass.text()
 
-       # Caredove
-       cd_email = self.cd_email.text().strip()
-       cd_pass  = self.cd_pass.text()
+        _apply_treat_env(u, p)
+        _apply_caredove_env(cd_email, cd_pass)
+        _apply_trapeze_env(tr_u, tr_p)
 
-       # Trapeze
-       tr_u = self.tr_user.text().strip()
-       tr_p = self.tr_pass.text()
+        s = dict(_load_settings())
+        s["TREAT_USERNAME"]     = u
+        s["TREAT_PASSWORD"]     = p
+        s["CAREDOVE_EMAIL"]     = cd_email
+        s["CAREDOVE_PASSWORD"]  = cd_pass
+        s["TRAPEZE_USERNAME"]   = tr_u
+        s["TRAPEZE_PASSWORD"]   = tr_p
+        _save_settings(s)
 
-       # Apply to env immediately
-       _apply_treat_env(u, p)
-       _apply_caredove_env(cd_email, cd_pass)
-       _apply_trapeze_env(tr_u, tr_p)
+        self._log("Saved Treat, Caredove & Trapeze credentials (env updated).")
 
-       # Persist
-       s = dict(_load_settings())
-       s["TREAT_USERNAME"]     = u
-       s["TREAT_PASSWORD"]     = p
-       s["CAREDOVE_EMAIL"]     = cd_email
-       s["CAREDOVE_PASSWORD"]  = cd_pass
-       s["TRAPEZE_USERNAME"]   = tr_u
-       s["TRAPEZE_PASSWORD"]   = tr_p
-       _save_settings(s)
-
-       self._log("Saved Treat, Caredove & Trapeze credentials (env updated).")
-
-
-
-    # ---- logging
     def _log(self, msg: str):
         self.log.appendPlainText(msg.rstrip())
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
@@ -1089,13 +1054,14 @@ class MainWindow(QMainWindow):
                     self._set_status(payload["key"], payload["state"], payload.get("text"))
                 elif typ == "log":
                     self._log(payload["msg"])
+                elif typ == "show_df":
+                    self._show_dataframe(payload["df"], payload.get("title", "Output"))
                 elif typ == "done_all":
                     self._set_progress(False)
                     self._log("All steps completed.")
                     self.running = False
                     self.btn_run.setEnabled(True); self.btn_run.setText("Run")
                     self.btn_run_checked.setEnabled(True); self.btn_run_checked.setText("Run checked")
-
                 elif typ == "failed_all":
                     self._set_progress(False)
                     self._log("Pipeline stopped due to failure.")
@@ -1116,10 +1082,12 @@ class MainWindow(QMainWindow):
                 elif typ == "deps_failed":
                     self.btn_install_deps.setEnabled(True); self.btn_install_deps.setText("Check & Install Libraries")
                     self._log_setup("Dependency check stopped due to failure.")
+                elif typ == "211_done":
+                    self.btn_run_211.setEnabled(True)
+                    self.btn_run_211.setText("Run 211 Update + Cleaning")
         except queue.Empty:
             pass
 
-    # ---- UI helpers
     def _set_progress(self, on: bool):
         self.progress.setVisible(on)
 
@@ -1129,7 +1097,6 @@ class MainWindow(QMainWindow):
             self.steps_scroll.ensureWidgetVisible(row, xMargin=0, yMargin=24)
 
     def _set_status(self, step_key: str, state: str, text: str | None = None):
-        # row text/color
         r = self.step_rows.get(step_key)
         if r:
             r["status"].setText(text if text is not None else state.capitalize())
@@ -1139,51 +1106,42 @@ class MainWindow(QMainWindow):
             self._set_progress(True)
             self._auto_scroll_to_step(step_key)
 
-        # ----- NODES (steady glow) -----
         for node_key in STEP_NODE_MAP.get(step_key, []):
             if step_key == "alaya" and state == "running":
                 self.flow.set_node_state(node_key, "done")
             else:
                 self.flow.set_node_state(node_key, state)
 
-        # ----- EDGES (steady glow) -----
         for a, b in STEP_EDGE_MAP.get(step_key, []):
-            # Only upgrade state, don’t downgrade
             prev_state = next((e["state"] for e in self.flow._edges if e["from"] == a and e["to"] == b), "pending")
             if prev_state != "done" or state == "fail":
                 self.flow.set_edge_state(a, b, state)
 
-
-    # ---- Actions
-    # inside MainWindow
-    def _reset_visuals(self):
-        # reset UI rows
-        for k, r in self.step_rows.items():
-            r["status"].setText("Pending")
-            r["status"].setStyleSheet(f"color:{STATUS_COLORS['pending']};")
-        # reset nodes
-        for node_key in FLOW_LABELS:
-            self.flow.set_node_state(node_key, "pending")
-        # reset edges
-        for a, b in ALL_EDGES:
-            self.flow.set_edge_state(a, b, "pending")
-
     def start_pipeline(self):
-        if self.running: return
+        if self.running:
+            return
         self._reset_visuals()
         self.running = True
         self.btn_run.setEnabled(False); self.btn_run.setText("Running…")
-        # runs all steps because steps=None by default
         threading.Thread(target=run_pipeline, args=(self,), daemon=True).start()
-
 
     def start_reports(self):
         selected = [(key, label, module) for (key, label, module, cadence) in REPORTS
-                if self.report_checks[key].isChecked()]
+                    if self.report_checks[key].isChecked()]
         if not selected:
-            self._log("No reports selected."); return
+            self._log("No reports selected.")
+            return
         self.btn_run_reports.setEnabled(False); self.btn_run_reports.setText("Running…")
         threading.Thread(target=run_reports, args=(self, selected), daemon=True).start()
+
+    def start_211_job(self):
+        if self.running:
+            self._log("Pipeline is currently running; cannot run 211 job.")
+            return
+
+        self.btn_run_211.setEnabled(False)
+        self.btn_run_211.setText("Running…")
+        threading.Thread(target=run_211_job, args=(self,), daemon=True).start()
 
     def start_deps_check(self):
         self.btn_install_deps.setEnabled(False)
@@ -1192,9 +1150,62 @@ class MainWindow(QMainWindow):
         threading.Thread(target=run_deps_check, args=(self,), daemon=True).start()
 
 # ------------------ Workers ------------------
+def run_211_job(win: "MainWindow"):
+    com_inited = False
+    try:
+        try:
+            pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+            com_inited = True
+        except Exception as e:
+            win.q.put(("log", {"msg": f"COM init warning (211 job): {e}"}))
+
+        modules = [
+            "Auto_reports_pulling.211Data_Update",
+            "Data_Pipeline.211Data_Cleaning",
+            "Data_Pipeline.211Data_Format_for_AI",
+        ]
+
+        win.q.put(("log", {"msg": "211 job started: Update -> Cleaning -> Format for AI"}))
+        t0 = time.time()
+
+        for modname in modules:
+            step_t0 = time.time()
+            try:
+                runner = _get_runner(modname)
+                result = runner()
+                dt = time.time() - step_t0
+
+                win.q.put(("log", {"msg": f"✓ {modname} done ({dt:.1f}s)"}))
+
+                # Optional: if module returns output path(s), log them nicely
+                if result is not None:
+                    if isinstance(result, (list, tuple)):
+                        for item in result:
+                            win.q.put(("log", {"msg": f"   Saved: {item}"}))
+                    else:
+                        win.q.put(("log", {"msg": f"   Saved: {result}"}))
+
+            except Exception:
+                dt = time.time() - step_t0
+                win.q.put(("log", {"msg": f"✗ {modname} failed ({dt:.1f}s)"}))
+                win.q.put(("log", {"msg": traceback.format_exc()}))
+                return
+
+        total = time.time() - t0
+        win.q.put(("log", {"msg": f"211 job completed ✅ ({total:.1f}s)"}))
+
+    finally:
+        if com_inited:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+        win.q.put(("211_done", {}))
+
 def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = None, stop_on_error: bool = True):
     if steps is None:
-        steps = STEPS  # default: all
+        steps = STEPS
 
     com_inited = False
     try:
@@ -1207,7 +1218,8 @@ def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = Non
         for key, title_text, module in steps:
             count, plain = _step_parts(title_text)
             start_msg = f"Starting: {plain}"
-            print(start_msg); win.q.put(("log", {"msg": start_msg}))
+            print(start_msg)
+            win.q.put(("log", {"msg": start_msg}))
             win.q.put(("status", {"key": key, "state": "running", "text": "Running…"}))
             t0 = time.time()
 
@@ -1218,28 +1230,46 @@ def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = Non
                 win.q.put(("status", {"key": key, "state": "fail", "text": f"Failed to import ({dt:.1f}s)"}))
                 win.q.put(("log", {"msg": traceback.format_exc()}))
                 if stop_on_error:
-                    win.q.put(("failed_all", {})); return
+                    win.q.put(("failed_all", {}))
+                    return
                 continue
 
             try:
-                runner()
+                if key == "trapeze":
+                    buf = io.StringIO()
+                    with redirect_stdout(buf), redirect_stderr(buf):
+                        runner()
+
+                    captured = buf.getvalue()
+                    warning_text = "WARNING: Service Provider is not Reconnect, it might cause error in the Pipeline, please manually change it back."
+
+                    for line in captured.splitlines():
+                        if warning_text in line:
+                            win.q.put(("log", {"msg": f"❌ {line.strip()}"}))
+                else:
+                    runner()
+
                 dt = time.time() - t0
                 win.q.put(("status", {"key": key, "state": "done", "text": f"Done ({dt:.1f}s)"}))
                 finish_msg = (f"[{count}] Finished" if count else "Finished") + f" ({dt:.1f}s)"
-                print(finish_msg); win.q.put(("log", {"msg": finish_msg}))
+                print(finish_msg)
+                win.q.put(("log", {"msg": finish_msg}))
+
             except Exception:
                 dt = time.time() - t0
                 win.q.put(("status", {"key": key, "state": "fail", "text": f"Failed ({dt:.1f}s)"}))
                 win.q.put(("log", {"msg": traceback.format_exc()}))
                 if stop_on_error:
-                    win.q.put(("failed_all", {})); return
+                    win.q.put(("failed_all", {}))
+                    return
     finally:
         if com_inited:
-            try: pythoncom.CoUninitialize()
-            except Exception: pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
         win.q.put(("done_all", {}))
 
-# --- QUIET reports: only a single success/fail line per report ---
 def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
     com_inited = False
     try:
@@ -1252,10 +1282,8 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
         for key, label, module in selected_reports:
             try:
                 runner = _get_runner(module)
-                result = runner()  # Module decides what to return
+                result = runner()
 
-                # Show in Output table if we get a DataFrame,
-                # OR if we get a path to a CSV/XLSX file.
                 df_to_show = None
 
                 if isinstance(result, pd.DataFrame):
@@ -1264,16 +1292,13 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
                 elif isinstance(result, (str, Path)):
                     p = Path(result)
                     if p.suffix.lower() == ".csv":
-                        # Your CSS pipeline writes CSV w/o headers; show as-is
                         df_to_show = pd.read_csv(p, header=None, dtype="object", encoding="utf-8-sig")
                     elif p.suffix.lower() in (".xlsx", ".xls"):
-                        # If a report writes Excel, preview it too
                         df_to_show = pd.read_excel(p, header=None, dtype="object")
 
                 if df_to_show is not None:
-                    win._show_dataframe(df_to_show)
+                    win.q.put(("show_df", {"df": df_to_show, "title": label}))
 
-                # ONE LINE ONLY ✅
                 if isinstance(result, (str, Path)):
                     win.q.put(("log", {"msg": f"{label} — file updated: {Path(result)}"}))
                 else:
@@ -1287,11 +1312,10 @@ def run_reports(win: MainWindow, selected_reports: list[tuple[str,str,str]]):
         win.q.put(("reports_done", {}))
     finally:
         if com_inited:
-            try: pythoncom.CoUninitialize()
-            except Exception: pass
-
-
-
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 def run_deps_check(win: MainWindow):
     try:
