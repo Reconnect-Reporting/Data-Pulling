@@ -16,7 +16,7 @@ def clean_dir() -> Path:
     return Path.home() / "OneDrive - Reconnect Community Health Services (1)" / "data" / "Clean Data" / "Treat"
 
 # -------- Test IDs to remove --------
-TEST_IDS = {"1","10314","12675","7941","7942","9383","9384","11633","8239","7945"}
+TEST_IDS = {"1","10314","12675","7941","7942","9383","9384","11633","8239","7945","UNREG"}
 
 # ============================================================
 # =============== CSV HELPERS (existing logic) ===============
@@ -624,8 +624,49 @@ def _clean_spaces_in_columns_df(df: pd.DataFrame) -> pd.DataFrame:
 def _ipcc_goal_postprocess(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # fill down everything
-    df = df.ffill()
+    # Fill down within each MRN block only.
+    # A non-blank value in the first column starts a new client block.
+    # Blank rows inherit values only from earlier rows in that same block;
+    # nothing can carry over from the previous MRN.
+    #
+    # IMPORTANT: Do NOT fill down the date-range fields below.
+    # These should stay exactly as they appear in the source file.
+    # Everything else keeps the same fill-down behavior.
+    no_fill_date_cols_norm = {
+        "anticipatedenddate",
+        "anticipateenddate",
+        "startdate",
+        "enddate",
+    }
+
+    def _norm_col_name(col) -> str:
+        return re.sub(r"[\W_]+", "", str(col or "")).lower()
+
+    if not df.empty and len(df.columns) >= 1:
+        mrn_col = df.columns[0]
+        mrn_values = df[mrn_col].astype("string").str.strip()
+
+        # Every non-blank MRN starts a new group. Blank MRNs belong to the
+        # current group until the next non-blank MRN appears.
+        starts_new_mrn = (
+            mrn_values.notna()
+            & mrn_values.ne("")
+            & mrn_values.str.lower().ne("nan")
+        )
+        mrn_group = starts_new_mrn.cumsum()
+        in_mrn_group = mrn_group.gt(0)
+
+        fill_cols = [
+            c for c in df.columns
+            if _norm_col_name(c) not in no_fill_date_cols_norm
+        ]
+
+        if in_mrn_group.any() and fill_cols:
+            df.loc[in_mrn_group, fill_cols] = (
+                df.loc[in_mrn_group, fill_cols]
+                .groupby(mrn_group.loc[in_mrn_group], sort=False)
+                .ffill()
+            )
 
     # remove duplicates
     df = df.drop_duplicates()
@@ -673,11 +714,32 @@ def _ipcc_issue_postprocess(df: pd.DataFrame) -> pd.DataFrame:
     # clean column names
     df = _clean_spaces_in_columns_df(df)
 
-    # fill selected columns down
+    # Fill selected columns down within each MRN block only.
+    # Every non-blank MRN starts a new client block. Blank rows inherit values
+    # only from earlier rows in the same MRN block, never from the prior client.
     fill_cols = ["MRN", "PLANID", "Full Name", "Program Name", "Issue/Needs Title"]
     existing_fill_cols = [c for c in fill_cols if c in df.columns]
+
     if existing_fill_cols:
-        df[existing_fill_cols] = df[existing_fill_cols].ffill()
+        if "MRN" in df.columns:
+            mrn_values = df["MRN"].astype("string").str.strip()
+            starts_new_mrn = (
+                mrn_values.notna()
+                & mrn_values.ne("")
+                & mrn_values.str.lower().ne("nan")
+            )
+            mrn_group = starts_new_mrn.cumsum()
+            in_mrn_group = mrn_group.gt(0)
+
+            if in_mrn_group.any():
+                df.loc[in_mrn_group, existing_fill_cols] = (
+                    df.loc[in_mrn_group, existing_fill_cols]
+                    .groupby(mrn_group.loc[in_mrn_group], sort=False)
+                    .ffill()
+                )
+        else:
+            # Fallback to the original behavior only when an MRN column is absent.
+            df[existing_fill_cols] = df[existing_fill_cols].ffill()
 
     # filter out test ID 11633
     if "MRN" in df.columns:

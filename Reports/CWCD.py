@@ -39,16 +39,33 @@ def _read_csv_utf8sig(path: Path) -> pd.DataFrame:
 def _fiscal_year_start_end(today: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]:
     """
     Returns:
-      - fy_start (Apr 1 of active FY)
-      - eom_last_month (last day of last month)
-      - first_of_last_month (1st day of last month)
+      - fy_start
+      - eom_last_month
+      - first_of_last_month
+
+    Rule:
+      - If today is in April, report the full previous fiscal year
+        (Apr 1 last year -> Mar 31 this year)
+      - Otherwise, report the active fiscal year through the end of last month
     """
     today = today.normalize()
-    fy_apr1_this_year = pd.Timestamp(year=today.year, month=4, day=1)
-    fy_start = fy_apr1_this_year if today >= fy_apr1_this_year else pd.Timestamp(year=today.year - 1, month=4, day=1)
     first_of_this_month = today.replace(day=1)
     eom_last_month = first_of_this_month - pd.Timedelta(days=1)
     first_of_last_month = first_of_this_month - pd.DateOffset(months=1)
+
+    # Special rule: if current month is April, use the full previous fiscal year
+    if today.month == 4:
+        fy_start = pd.Timestamp(year=today.year - 1, month=4, day=1)
+        eom_last_month = pd.Timestamp(year=today.year, month=3, day=31)
+        first_of_last_month = pd.Timestamp(year=today.year, month=3, day=1)
+    else:
+        fy_apr1_this_year = pd.Timestamp(year=today.year, month=4, day=1)
+        fy_start = (
+            fy_apr1_this_year
+            if today >= fy_apr1_this_year
+            else pd.Timestamp(year=today.year - 1, month=4, day=1)
+        )
+
     return fy_start, eom_last_month, first_of_last_month
 
 def _build_cumulative_table(visits_df: pd.DataFrame, fy_start: pd.Timestamp, eom_last_month: pd.Timestamp) -> pd.DataFrame:

@@ -9,6 +9,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex
 import pandas as pd
 import io
 from contextlib import redirect_stdout, redirect_stderr
+import openai
 
 
 def _in_venv() -> bool:
@@ -195,6 +196,10 @@ def _save_settings(data: dict) -> None:
     except Exception:
         pass
 
+def _apply_risk_email_env(email_to: str, email_cc: str = "") -> None:
+    os.environ["RISK_SUMMARY_EMAIL_TO"] = email_to
+    os.environ["RISK_SUMMARY_EMAIL_CC"] = email_cc
+
 def _apply_treat_env(username: str, password: str) -> None:
     os.environ["TREAT_USERNAME"] = username
     os.environ["TREAT_PASSWORD"] = password
@@ -209,22 +214,40 @@ def _apply_trapeze_env(username: str, password: str) -> None:
 
 # ------------------ PIPELINE STEPS ------------------
 STEPS = [
-    ("clean",  "[1/13] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
-    ("treat",  "[2/13] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
-    ("move",   "[3/13] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
-    ("alaya",  "[4/13] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),
-    ("caredove","[5/13] Pulling Caredove Reports",         "Auto_reports_pulling.Caredove_Pulling"),
-    ("trapeze","[6/13] Pulling Trapeze Reports",           "Auto_reports_pulling.Trapeze_Report_Pulling"),
-    ("cmove",  "[7/13] Moving Caredove Files to OneDrive", "Data_Pipeline.Caredove_File_Moving"),
-    ("tclean", "[8/13] Cleaning Treat Data",               "Data_Pipeline.Treat_Data_Cleaning"),
-    ("anclean", "[9/13] Cleaning AlayaCare Note Data",     "Data_Pipeline.AlayaCare_Data_Note_Cleaning"),
-    ("aclean", "[10/13] Cleaning AlayaCare Data",          "Data_Pipeline.AlayaCare_Data_Cleaning"),
-    ("cclean", "[11/13] Cleaning Caredove Data",           "Data_Pipeline.Caredove_Data_Cleaning"),
-    ("map_refresh", "[12/13] Refreshing ACTT Team Map",    "Data_Pipeline.ACTT_team_Map_Refreshing"),
-    ("report_dashboard","[13/13] Refreshing Dashboards", [
+    ("clean",  "[1/17] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
+
+    ("treat",  "[2/17] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
+    ("stimes_pull", "[3/17] Pulling Sound Times Treat Reports", "Auto_reports_pulling.Stimes_Treat_Pulling"),
+
+    ("move",   "[4/17] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
+    ("stimes_move", "[5/17] Moving Sound Times Treat Files", "Data_Pipeline.Stimes_Treat_File_Moving"),
+
+    ("alaya",  "[6/17] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),
+    ("caredove","[7/17] Pulling Caredove Reports",         "Auto_reports_pulling.Caredove_Pulling"),
+    ("trapeze","[8/17] Pulling Trapeze Reports",           "Auto_reports_pulling.Trapeze_Report_Pulling"),
+    ("cmove",  "[9/17] Moving Caredove Files to OneDrive", "Data_Pipeline.Caredove_File_Moving"),
+
+    ("tclean", "[10/17] Cleaning Treat Data",              "Data_Pipeline.Treat_Data_Cleaning"),
+    ("stimes_clean", "[11/17] Cleaning Sound Times Treat Data", "Data_Pipeline.SoundTimes_Data_Cleaning"),
+
+    ("anclean", "[12/17] Cleaning AlayaCare Note Data",     "Data_Pipeline.AlayaCare_Data_Note_Cleaning"),
+    ("aclean", "[13/17] Cleaning AlayaCare Data",          "Data_Pipeline.AlayaCare_Data_Cleaning"),
+    ("cclean", "[14/17] Cleaning Caredove Data",           "Data_Pipeline.Caredove_Data_Cleaning"),
+    ("map_refresh", "[15/17] Refreshing ACTT Team Map",    "Data_Pipeline.ACTT_team_Map_Refreshing"),
+    ("report_dashboard","[16/17] Refreshing Dashboards", [
         "Reports.OHRS_MHA",
         "Reports.OHRS_SFS",
         "Reports.Client_enroll_in_multiple_programs"
+    ]),
+    ("risk_summary", "[17/17] Running Risk Summary Scripts", [
+        "Risk_Summary.Risk_summary_data_transformation",
+        "Risk_Summary.AI_Agent.risk_summary_act",
+        "Risk_Summary.AI_Agent.risk_summary_assisted_living",
+        "Risk_Summary.AI_Agent.risk_summary_copa",
+        "Risk_Summary.AI_Agent.risk_summary_ehts",
+        "Risk_Summary.AI_Agent.risk_summary_mha_cm",
+        "Risk_Summary.AI_Agent.risk_summary_sfscm",
+        "Risk_Summary.Combining documents"
     ])
 ]
 
@@ -245,7 +268,8 @@ REPORTS = [
     ("geri hub", "Geri Hub Report (open in new window)", "Reports.Geri_Hub_Report","monthly"),
     ("ipc", "IPC Report (open in new window)", "Reports.IPC_Report","monthly"),
     ("coss", "COSS Report (open in new window)", "Reports.COSS_Report","monthly"),
-    ("trapeze", "Trapeze Report (Save to Downloads)", "Reports.Trapeze_Report","weekly")
+    ("trapeze", "Trapeze Report (Save to Downloads)", "Reports.Trapeze_Report","weekly"),
+    ("tch_tsh", "TCH_TSH Report (Save to Downloads)", "Reports.TCH_TSH_Report","weekly")
 ]
 
 STATUS_COLORS = {
@@ -271,35 +295,83 @@ FLOW_LABELS = {
     "reports": "Reports ready",
 }
 
+
 STEP_NODE_MAP = {
     "clean":  ["clean"],
-    "treat":  ["treat_box","downloads"],
+
+    # Treat report pulling starts Treat node, but do not light Downloads yet
+    "treat":  ["treat_box"],
+
+    # Downloads lights up only after Sound Times Treat reports are pulled
+    "stimes_pull": ["treat_box", "downloads"],
+
+    # Treat file moving does not light Raw yet
     "move":   [],
-    "alaya":  ["alayacare","email","raw"],
+
+    # Raw lights up only after Sound Times files are moved
+    "stimes_move": ["raw"],
+
+    "alaya":  ["alayacare", "email", "raw"],
+
+    # Treat cleaning does not light Clean Data yet
     "tclean": [],
+
+    # Clean Data lights up after Sound Times cleaning finishes
+    "stimes_clean": ["clean_data"],
+
     "aclean": [],
-    "caredove":["caredove","caredove_dl"],
-    "cmove":["raw"],
-    "cclean":["clean_data"],
+    "caredove": ["caredove", "caredove_dl"],
+    "cmove": ["raw"],
+    "cclean": ["clean_data"],
     "trapeze": ["Trapeze", "trapeze_dl"],
-    "report_dashboard": ["PowerBI", "reports"],
+    "report_dashboard": ["PowerBI"],
+    "risk_summary": ["reports"],
 }
 
 STEP_EDGE_MAP = {
-    "clean":  [("clean","treat_box"),
-               ("clean","alayacare"),
-               ("clean","caredove"),
-               ("clean","Trapeze")],
-    "treat":  [("treat_box", "downloads")],
-    "move":   [("downloads", "raw")],
-    "alaya":  [("alayacare", "email"), ("email","raw")],
+    "clean":  [
+        ("clean", "treat_box"),
+        ("clean", "alayacare"),
+        ("clean", "caredove"),
+        ("clean", "Trapeze")
+    ],
+
+    # Do not light Treat -> Downloads after regular Treat pulling
+    "treat": [],
+
+    # Treat -> Downloads lights up after Sound Times Treat pulling finishes
+    "stimes_pull": [
+        ("treat_box", "downloads")
+    ],
+
+    # Do not light Downloads -> Raw after regular Treat file moving
+    "move": [],
+
+    # Downloads -> Raw lights up after Sound Times file moving finishes
+    "stimes_move": [
+        ("downloads", "raw")
+    ],
+
+    "alaya": [
+        ("alayacare", "email"),
+        ("email", "raw")
+    ],
+
+    # Do not light Raw -> Clean Data after regular Treat cleaning
     "tclean": [],
+
+    # Raw -> Clean Data lights up after Sound Times cleaning finishes
+    "stimes_clean": [
+        ("raw", "clean_data")
+    ],
+
     "aclean": [("raw", "clean_data")],
-    "caredove":[("caredove","caredove_dl")],
-    "cmove":  [("caredove_dl","raw")],
-    "cclean":[("raw", "clean_data")],
-    "trapeze": [("Trapeze","trapeze_dl"), ("trapeze_dl","raw")],
-    "report_dashboard": [("clean_data","PowerBI"), ("clean_data","reports")]
+    "caredove": [("caredove", "caredove_dl")],
+    "cmove": [("caredove_dl", "raw")],
+    "cclean": [("raw", "clean_data")],
+    "trapeze": [("Trapeze", "trapeze_dl"), ("trapeze_dl", "raw")],
+    "report_dashboard": [("clean_data", "PowerBI")],
+    "risk_summary": [("clean_data", "reports")]
 }
 
 ALL_EDGES = [
@@ -342,11 +414,18 @@ def _get_runner(module_spec):
         return fn
 
     if isinstance(module_spec, (list, tuple)):
-        fns = [_import_runner(m) for m in module_spec]
+        modules_and_fns = [(m, _import_runner(m)) for m in module_spec]
 
         def run_all():
-            for fn in fns:
-                fn()
+            results = []
+            for modname, fn in modules_and_fns:
+                result = fn()
+                results.append({
+                    "module": modname,
+                    "result": result
+                })
+            return results
+
         return run_all
 
     if isinstance(module_spec, str):
@@ -709,6 +788,28 @@ class MainWindow(QMainWindow):
             self.flow.set_node_state(node_key, "pending")
         for a, b in ALL_EDGES:
             self.flow.set_edge_state(a, b, "pending")
+    
+    def _save_risk_email_settings(self):
+        risk_email_to = self.risk_email_to.text().strip()
+        risk_email_cc = self.risk_email_cc.text().strip()
+
+        _apply_risk_email_env(risk_email_to, risk_email_cc)
+
+        s = dict(_load_settings())
+        s["RISK_SUMMARY_EMAIL_TO"] = risk_email_to
+        s["RISK_SUMMARY_EMAIL_CC"] = risk_email_cc
+        _save_settings(s)
+
+        self._log("Saved Risk Summary email recipient(s) and CC.")
+
+    def start_risk_summary_email_job(self):
+        if self.running:
+            self._log("Pipeline is currently running; cannot send risk summary email now.")
+            return
+
+        self.btn_send_risk_email.setEnabled(False)
+        self.btn_send_risk_email.setText("Sending…")
+        threading.Thread(target=run_risk_summary_email_job, args=(self,), daemon=True).start()
 
     def start_checked_steps(self):
         if self.running:
@@ -764,6 +865,10 @@ class MainWindow(QMainWindow):
             os.environ["TRAPEZE_USERNAME"] = self.settings["TRAPEZE_USERNAME"]
         if "TRAPEZE_PASSWORD" in self.settings:
             os.environ["TRAPEZE_PASSWORD"] = self.settings["TRAPEZE_PASSWORD"]
+        if "RISK_SUMMARY_EMAIL_TO" in self.settings:
+            os.environ["RISK_SUMMARY_EMAIL_TO"] = self.settings["RISK_SUMMARY_EMAIL_TO"]
+        if "RISK_SUMMARY_EMAIL_CC" in self.settings:
+            os.environ["RISK_SUMMARY_EMAIL_CC"] = self.settings["RISK_SUMMARY_EMAIL_CC"]
 
         self.q = queue.Queue()
         self.running = False
@@ -781,10 +886,12 @@ class MainWindow(QMainWindow):
         self.tab_auto  = QWidget()
         self.tab_rep   = QWidget()
         self.tab_211   = QWidget()
+        self.tab_email = QWidget()
 
         self.tabs.addTab(self.tab_auto,  "Data Automation")
         self.tabs.addTab(self.tab_rep,   "Reports")
         self.tabs.addTab(self.tab_211,   "211 Find Help")
+        self.tabs.addTab(self.tab_email, "Risk Summary Email")
 
         auto_layout = QVBoxLayout(self.tab_auto)
         auto_layout.setSpacing(8)
@@ -1006,6 +1113,54 @@ class MainWindow(QMainWindow):
 
         layout_211.addStretch(1)
 
+        layout_email = QVBoxLayout(self.tab_email)
+        layout_email.setSpacing(12)
+
+        email_title = QLabel("<b>Risk Summary Email</b>")
+        layout_email.addWidget(email_title)
+
+        email_group = QGroupBox("Email Settings")
+        email_grid = QGridLayout(email_group)
+
+        self.risk_email_to = QLineEdit(
+            os.getenv("RISK_SUMMARY_EMAIL_TO", self.settings.get("RISK_SUMMARY_EMAIL_TO", ""))
+        )
+        self.risk_email_to.setPlaceholderText("example1@email.com; example2@email.com")
+
+        self.risk_email_cc = QLineEdit(
+            os.getenv("RISK_SUMMARY_EMAIL_CC", self.settings.get("RISK_SUMMARY_EMAIL_CC", ""))
+        )
+        self.risk_email_cc.setPlaceholderText("cc1@email.com; cc2@email.com")
+
+        email_grid.addWidget(QLabel("Send To"), 0, 0)
+        email_grid.addWidget(self.risk_email_to, 0, 1)
+
+        email_grid.addWidget(QLabel("CC"), 1, 0)
+        email_grid.addWidget(self.risk_email_cc, 1, 1)
+
+        self.btn_save_risk_email = QPushButton("Save Email Address")
+        self.btn_save_risk_email.clicked.connect(self._save_risk_email_settings)
+        email_grid.addWidget(self.btn_save_risk_email, 2, 1, alignment=Qt.AlignRight)
+
+        layout_email.addWidget(email_group)
+
+        send_group = QGroupBox("Send Latest File")
+        send_layout = QVBoxLayout(send_group)
+
+        send_note = QLabel(
+            "This will find the newest file in Downloads starting with "
+            "'combined_lastest_risk_docs' and send it using Outlook."
+        )
+        send_note.setWordWrap(True)
+        send_layout.addWidget(send_note)
+
+        self.btn_send_risk_email = QPushButton("Send Latest Risk Summary")
+        self.btn_send_risk_email.clicked.connect(self.start_risk_summary_email_job)
+        send_layout.addWidget(self.btn_send_risk_email)
+
+        layout_email.addWidget(send_group)
+        layout_email.addStretch(1)
+
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(5000)
@@ -1022,21 +1177,26 @@ class MainWindow(QMainWindow):
         cd_pass  = self.cd_pass.text()
         tr_u = self.tr_user.text().strip()
         tr_p = self.tr_pass.text()
+        risk_email_to = self.risk_email_to.text().strip() if hasattr(self, "risk_email_to") else os.getenv("RISK_SUMMARY_EMAIL_TO", "").strip()
+        risk_email_cc = self.risk_email_cc.text().strip() if hasattr(self, "risk_email_cc") else os.getenv("RISK_SUMMARY_EMAIL_CC", "").strip()
 
         _apply_treat_env(u, p)
         _apply_caredove_env(cd_email, cd_pass)
         _apply_trapeze_env(tr_u, tr_p)
+        _apply_risk_email_env(risk_email_to, risk_email_cc)
 
         s = dict(_load_settings())
-        s["TREAT_USERNAME"]     = u
-        s["TREAT_PASSWORD"]     = p
-        s["CAREDOVE_EMAIL"]     = cd_email
-        s["CAREDOVE_PASSWORD"]  = cd_pass
-        s["TRAPEZE_USERNAME"]   = tr_u
-        s["TRAPEZE_PASSWORD"]   = tr_p
+        s["TREAT_USERNAME"]      = u
+        s["TREAT_PASSWORD"]      = p
+        s["CAREDOVE_EMAIL"]      = cd_email
+        s["CAREDOVE_PASSWORD"]   = cd_pass
+        s["TRAPEZE_USERNAME"]    = tr_u
+        s["TRAPEZE_PASSWORD"]    = tr_p
+        s["RISK_SUMMARY_EMAIL_TO"] = risk_email_to
+        s["RISK_SUMMARY_EMAIL_CC"] = risk_email_cc
         _save_settings(s)
 
-        self._log("Saved Treat, Caredove & Trapeze credentials (env updated).")
+        self._log("Saved Treat, Caredove, Trapeze, and Risk Summary email settings.")
 
     def _log(self, msg: str):
         self.log.appendPlainText(msg.rstrip())
@@ -1085,6 +1245,9 @@ class MainWindow(QMainWindow):
                 elif typ == "211_done":
                     self.btn_run_211.setEnabled(True)
                     self.btn_run_211.setText("Run 211 Update + Cleaning")
+                elif typ == "risk_email_done":
+                    self.btn_send_risk_email.setEnabled(True)
+                    self.btn_send_risk_email.setText("Send Latest Risk Summary")
         except queue.Empty:
             pass
 
@@ -1150,6 +1313,66 @@ class MainWindow(QMainWindow):
         threading.Thread(target=run_deps_check, args=(self,), daemon=True).start()
 
 # ------------------ Workers ------------------
+def run_risk_summary_email_job(win: "MainWindow"):
+    com_inited = False
+    try:
+        try:
+            pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+            com_inited = True
+        except Exception as e:
+            win.q.put(("log", {"msg": f"COM init warning (risk email): {e}"}))
+
+        win.q.put(("log", {"msg": "Starting Risk Summary email job..."}))
+
+        import Risk_Summary.Risk_summary_email as risk_email_mod
+
+        # Make sure latest value from UI is saved into env/settings first
+        risk_email_to = win.risk_email_to.text().strip()
+        risk_email_cc = win.risk_email_cc.text().strip()
+
+        _apply_risk_email_env(risk_email_to, risk_email_cc)
+
+        s = dict(_load_settings())
+        s["RISK_SUMMARY_EMAIL_TO"] = risk_email_to
+        s["RISK_SUMMARY_EMAIL_CC"] = risk_email_cc
+        _save_settings(s)
+
+        result = risk_email_mod.run()
+
+        if isinstance(result, dict):
+            status = result.get("status", "sent")
+            to_email = result.get("to", risk_email_to)
+            cc_email = result.get("cc", risk_email_cc)
+            attachment = result.get("attachment", "")
+
+            win.q.put(("log", {
+                "msg": f"Risk summary email {status} to {to_email}"
+            }))
+            
+            if cc_email:
+                win.q.put(("log", {
+                    "msg": f"CC: {cc_email}"
+                }))
+
+            if attachment:
+                win.q.put(("log", {
+                    "msg": f"Attachment: {attachment}"
+                }))
+        else:
+            win.q.put(("log", {"msg": "Risk summary email completed."}))
+
+    except Exception:
+        win.q.put(("log", {"msg": "Risk summary email failed:"}))
+        win.q.put(("log", {"msg": traceback.format_exc()}))
+    finally:
+        if com_inited:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+        win.q.put(("risk_email_done", {}))
+        
 def run_211_job(win: "MainWindow"):
     com_inited = False
     try:
@@ -1247,7 +1470,36 @@ def run_pipeline(win: "MainWindow", steps: list[tuple[str,str,str]] | None = Non
                         if warning_text in line:
                             win.q.put(("log", {"msg": f"❌ {line.strip()}"}))
                 else:
-                    runner()
+                    result = runner()
+
+                    # Handle returned results from multi-module steps
+                    if isinstance(result, list):
+                        for item in result:
+                            if not isinstance(item, dict):
+                                continue
+
+                            modname = item.get("module", "")
+                            mod_result = item.get("result", None)
+
+                            # If a module returns the dict from your combining-documents script
+                            if isinstance(mod_result, dict):
+                                checked_messages = mod_result.get("checked_messages", [])
+                                for msg in checked_messages:
+                                    win.q.put(("log", {"msg": msg}))
+
+                                output_file = mod_result.get("output_file")
+                                if output_file:
+                                    win.q.put(("log", {"msg": f"Final combined file: {output_file}"}))
+
+                    # Also support single-module dict return just in case
+                    elif isinstance(result, dict):
+                        checked_messages = result.get("checked_messages", [])
+                        for msg in checked_messages:
+                            win.q.put(("log", {"msg": msg}))
+
+                        output_file = result.get("output_file")
+                        if output_file:
+                            win.q.put(("log", {"msg": f"Final combined file: {output_file}"}))
 
                 dt = time.time() - t0
                 win.q.put(("status", {"key": key, "state": "done", "text": f"Done ({dt:.1f}s)"}))

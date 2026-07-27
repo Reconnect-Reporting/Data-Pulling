@@ -406,9 +406,15 @@ def run(output_path: Optional[Path | str] = None) -> pd.DataFrame:
         'Resident Days',
         'Group Participants',
         'Group Session',
+        'Group Session - Virtual',
         'Individuals Serviced',
         'Individuals Served by Org'
-    ])]
+    ])].copy()
+    
+    # Lump virtual group sessions into regular Group Session
+    mis_df["Category"] = mis_df["Category"].replace({
+        "Group Session - Virtual": "Group Session"
+    })
 
     mis_df2 = mis_df.drop(columns=["FCC", "MIS Code", "Description"], errors="ignore").copy()
 

@@ -1200,7 +1200,7 @@ def run():
     try_login(max_retries=3)
     open_synthesis_page()
 
-    # --- Report 4B ---
+    # --- Report 4B ADT Census ---
     print("Running report 4B...")
     find_report("report4B")
     set_dates()
@@ -1209,19 +1209,28 @@ def run():
     back_to_synthesis_home()
     time.sleep(1)
 
-    ## --- Report 8B (Census) ---
-    #print("Running report 8B (Census)...")
-    #find_report("report8B")
-    #set_dates()
-    #choose_all_programs()
-    #click_generate()
-    #download_csv_from_viewer()
-    #back_to_synthesis_home()
-    #time.sleep(1)
+    ## --- Report 8B (rpt_Census) ---
+    print("Running report 8B (Census)...")
+    find_report("report8B")
+    set_dates()
+    choose_all_programs()
+    click_generate()
+    download_csv_from_viewer()
+    back_to_synthesis_home()
+    time.sleep(1)
 #
-    # --- Report 30B ---
-    print("Running report 30B...")
-    find_report("report30B")
+    # --- Report 42B Workload---
+    print("Running report 42B...")
+    find_report("report42B")
+    set_dates()
+    click_generate()
+    download_csv_from_viewer()
+    back_to_synthesis_home()
+    time.sleep(1)
+
+    # --- Report 31B Progress Note ---
+    print("Running report 31B...")
+    find_report("report31B")
     set_dates()
     choose_all_programs()
     click_generate()
@@ -1229,18 +1238,9 @@ def run():
     back_to_synthesis_home()
     time.sleep(1)
 
-    # --- Report 41B ---
-    print("Running report 41B...")
-    find_report("report41B")
-    set_dates()
-    click_generate()
-    download_csv_from_viewer()
-    back_to_synthesis_home()
-    time.sleep(1)
-
-    # --- Report 17B (MIS - Statistics) ---
-    print("Running report 17B (MIS - Statistics)...")
-    find_report("report17B")
+    # --- Report 18B (MIS - Statistics) ---
+    print("Running report 18B (MIS - Statistics)...")
+    find_report("report18B")
     set_dates_fiscal()
     choose_all_programs()
     click_generate()
@@ -1249,8 +1249,8 @@ def run():
     time.sleep(1)
 
         # --- Report 31B New Referrals ---
-    print("Running report 31B (Referral Reports New Referrals)...")
-    find_report("report31B")
+    print("Running report 32B (Referral Reports New Referrals)...")
+    find_report("report32B")
     set_dates()
     choose_all_programs()
     click_generate()
@@ -1275,8 +1275,8 @@ def run():
     time.sleep(2)
 #
     # --- 31B — Is Waitlisted total ---
-    print("Running report 31B (Census) — Is Waitlisted...")
-    find_report("report31B")
+    print("Running report 32B (Census) — Is Waitlisted...")
+    find_report("report32B")
     set_dates()
     choose_all_programs()
     click_generate()
@@ -1303,7 +1303,7 @@ def run():
     webfocus_tiles = ["Assessments", "External Documents", "Demographics_Active & Discharged", "Note Content RAC","IPCC Goal","IPCC Issue"]
 
     for idx, tile_label in enumerate(webfocus_tiles):
-        find_report("report40B")
+        find_report("report41B")
         click_generate_external()
         click_generate_external_in_buttons_container(timeout=360)
 

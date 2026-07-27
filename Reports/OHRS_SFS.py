@@ -171,7 +171,7 @@ def compute_meals(visits: pd.DataFrame) -> MealsResult:
     adp_meals = float(len(adp_pairs))
 
     # Meals on Wheels (label in data: 'Meals on Wheel')
-    mow = visits[visits["Service Code Department Name"] == "Meals on Wheel"].copy()
+    mow = visits[visits["Service Code Department Name"] == "Meals on Wheels"].copy()
     mow_individuals = nunique_safe(mow["AlaycareID"])
     mow_norm = mow[["AlaycareID", "Date", "Visit Visit ID", "Service Code Department Name", "BillCode"]].drop_duplicates()
 

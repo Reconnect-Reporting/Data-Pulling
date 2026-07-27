@@ -101,9 +101,59 @@ def _excel_col_letter(n: int) -> str:
 
 
 # =========================
+#    CROSS-SYSTEM HELPERS
+# =========================
+def get_sfs_consent_treat_ids(alaya_dir: Path) -> set[str]:
+    """
+    Find all Treat IDs in ADT whose AlayaCare ClientID has a Consent Form in Form Report.
+    These Treat IDs should be considered consent-complete for MHA too.
+    """
+    adt_path = newest_any("ADT with Zone and Reference", alaya_dir)
+    print(f"Reading ADT for reverse cross-check: {adt_path}")
+    adt = read_any(adt_path)
+
+    client_col_a = _pick_col(adt, ["ClientID", "Client ID", "ID"])
+
+    try:
+        treat_id_col = _pick_col(adt, ["Treat ID", "TreatID", "Reference", "Reference ID", "Treat Ref ID"])
+    except KeyError:
+        print("Treat ID column not found in ADT; skipping reverse cross-check from SFS to MHA.")
+        return set()
+
+    form_path = newest_any("Form Report", alaya_dir)
+    print(f"Reading Form Report for reverse cross-check: {form_path}")
+    forms = read_any(form_path)
+
+    formname_col = _pick_col(forms, ["FormName", "Form Name"])
+    client_col_f = _pick_col(forms, ["ClientID", "Client ID", "ID"])
+
+    consent_forms = forms[
+        _nonempty_series(forms[formname_col])
+        & forms[formname_col].astype(str).str.strip().eq("Consent Form")
+        & _nonempty_series(forms[client_col_f])
+    ].copy()
+
+    sfs_consent_client_ids = set(consent_forms[client_col_f].astype(str).str.strip())
+
+    adt = adt[_nonempty_series(adt[client_col_a]) & _nonempty_series(adt[treat_id_col])].copy()
+    adt[client_col_a] = adt[client_col_a].astype(str).str.strip()
+    adt[treat_id_col] = adt[treat_id_col].astype(str).str.strip()
+
+    sfs_consent_treat_ids = set(
+        adt.loc[adt[client_col_a].isin(sfs_consent_client_ids), treat_id_col]
+        .astype(str)
+        .str.strip()
+    )
+    sfs_consent_treat_ids = {x for x in sfs_consent_treat_ids if x != ""}
+
+    print(f"SFS consent mapped to {len(sfs_consent_treat_ids)} Treat IDs for MHA removal")
+    return sfs_consent_treat_ids
+
+
+# =========================
 #      CORE PIPELINE
 # =========================
-def build_missing_mha(treat_dir: Path) -> pd.DataFrame:
+def build_missing_mha(treat_dir: Path, alaya_dir: Path) -> pd.DataFrame:
     census_path = newest_csv("rpt_Census", treat_dir)
     print(f"Reading Census: {census_path}")
     census = read_any(census_path)
@@ -130,15 +180,24 @@ def build_missing_mha(treat_dir: Path) -> pd.DataFrame:
 
     tool_col = _pick_col(assess, ["TOOLNAME", "Tool Name"])
     assess_id_col = _pick_col(assess, ["ID", "Client ID", "ClientID"])
-    assess_filtered = assess[assess[tool_col].astype(str).str.strip().eq("Reconnect Consent Assessment Tool")].copy()
+    assess_filtered = assess[
+        _nonempty_series(assess[tool_col])
+        & assess[tool_col].astype(str).str.strip().eq("Reconnect Consent Assessment Tool")
+        & _nonempty_series(assess[assess_id_col])
+    ].copy()
 
     active_ids = set(
         census_active.loc[_nonempty_series(census_active[id_col]), id_col].astype(str).str.strip()
     )
-    assess_ids = set(
+    treat_assess_ids = set(
         assess_filtered.loc[_nonempty_series(assess_filtered[assess_id_col]), assess_id_col].astype(str).str.strip()
     )
-    missing_ids = active_ids - assess_ids
+
+    # NEW: anyone who has consent in SFS should also count as completed for MHA
+    sfs_consent_treat_ids = get_sfs_consent_treat_ids(alaya_dir)
+
+    completed_ids_any_system = treat_assess_ids | sfs_consent_treat_ids
+    missing_ids = active_ids - completed_ids_any_system
 
     keep_cols = [name_col, id_col, staff_col, program_col]
     rename_map = {name_col: "ClientName", id_col: "ID", staff_col: "Staff", program_col: "Program"}
@@ -173,7 +232,6 @@ def build_missing_mha(treat_dir: Path) -> pd.DataFrame:
         pf[date_pf_col] = pd.to_datetime(pf[date_pf_col], errors="coerce")
         pf = pf.dropna(subset=[date_pf_col]).copy()
 
-        # ===== UPDATED: first visit AFTER AdmitDate per client =====
         if "AdmitDate" in missing_df_mha.columns:
             missing_df_mha["AdmitDate"] = pd.to_datetime(missing_df_mha["AdmitDate"], errors="coerce")
 
@@ -198,7 +256,6 @@ def build_missing_mha(treat_dir: Path) -> pd.DataFrame:
         )
 
         missing_df_mha = missing_df_mha.merge(first_visits[["ID", "First Visit Date"]], on="ID", how="left")
-        # ===== END UPDATED BLOCK =====
 
     except FileNotFoundError:
         print("rpt_ProgStaffFinance not found; skipping First Visit join")
@@ -206,7 +263,7 @@ def build_missing_mha(treat_dir: Path) -> pd.DataFrame:
     return missing_df_mha
 
 
-def build_missing_sfs(alaya_dir: Path) -> pd.DataFrame:
+def build_missing_sfs(alaya_dir: Path, treat_dir: Path) -> pd.DataFrame:
     adt_path = newest_any("ADT with Zone and Reference", alaya_dir)
     print(f"Reading ADT: {adt_path}")
     adt = read_any(adt_path)
@@ -217,6 +274,11 @@ def build_missing_sfs(alaya_dir: Path) -> pd.DataFrame:
     program_col_a = _pick_col(adt, ["ServiceCodeDept", "Service Code Department Name"])
     zone_col = _pick_col(adt, ["Zone"])
     servicecode_col = _pick_col(adt, ["ServiceCode", "Service Code"])
+
+    try:
+        treat_id_col = _pick_col(adt, ["Treat ID", "TreatID", "Reference", "Reference ID", "Treat Ref ID"])
+    except KeyError:
+        treat_id_col = None
 
     try:
         service_start_col = _pick_col(adt, ["ServiceStartDate", "Service Start Date", "StartDate", "Start Date"])
@@ -259,6 +321,10 @@ def build_missing_sfs(alaya_dir: Path) -> pd.DataFrame:
         servicecode_col: "ServiceCode",
     }
 
+    if treat_id_col is not None:
+        keep_cols.append(treat_id_col)
+        rename_map[treat_id_col] = "TreatID"
+
     if service_start_col is not None:
         keep_cols.append(service_start_col)
         rename_map[service_start_col] = "ServiceStartDate"
@@ -277,6 +343,29 @@ def build_missing_sfs(alaya_dir: Path) -> pd.DataFrame:
     missing_df_sfs["Consent Status"] = "Missing"
     missing_df_sfs = missing_df_sfs.drop_duplicates()
     missing_df_sfs = missing_df_sfs[~missing_df_sfs["ClientName"].astype(str).str.contains("Test", na=False)].copy()
+
+    # If missing in AlayaCare, check Treat Assessment by Treat ID
+    if "TreatID" in missing_df_sfs.columns:
+        assess_path = newest_csv("Assessment", treat_dir)
+        print(f"Reading Treat Assessment for SFS cross-check: {assess_path}")
+        assess = read_any(assess_path)
+
+        tool_col = _pick_col(assess, ["TOOLNAME", "Tool Name"])
+        assess_id_col = _pick_col(assess, ["ID", "Client ID", "ClientID"])
+
+        assess_filtered = assess[
+            _nonempty_series(assess[tool_col])
+            & assess[tool_col].astype(str).str.strip().eq("Reconnect Consent Assessment Tool")
+            & _nonempty_series(assess[assess_id_col])
+        ].copy()
+
+        treat_consent_ids = set(assess_filtered[assess_id_col].astype(str).str.strip())
+
+        missing_df_sfs["TreatID"] = missing_df_sfs["TreatID"].astype(str).str.strip()
+        has_treat_consent = missing_df_sfs["TreatID"].isin(treat_consent_ids)
+
+        missing_df_sfs.loc[has_treat_consent, "Consent Status"] = "Completed in Treat"
+        missing_df_sfs = missing_df_sfs[~has_treat_consent].copy()
 
     return missing_df_sfs
 
@@ -405,7 +494,8 @@ def main(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_path = downloads / f"Consent_Missing_MHA_SFS_{ts}.xlsx"
 
-    missing_df_mha = build_missing_mha(treat_dir)
+    # UPDATED: pass alaya_dir into build_missing_mha
+    missing_df_mha = build_missing_mha(treat_dir, alaya_dir)
 
     remove_programs = [
         "CBT Adult Group",
@@ -432,7 +522,7 @@ def main(
 
     missing_df_mha = missing_df_mha[~(missing_df_mha["Program"].isin(remove_programs))].copy()
     missing_df_mha["AdmitDate"] = pd.to_datetime(missing_df_mha["AdmitDate"], errors="coerce")
-    missing_df_mha = missing_df_mha[~(missing_df_mha["ClientName"].str.contains("Anonymous"))]
+    missing_df_mha = missing_df_mha[~(missing_df_mha["ClientName"].str.contains("Anonymous", na=False))]
 
     start_date = pd.Timestamp("2025-04-01")
     end_date = pd.Timestamp.today() - pd.Timedelta(days=30)
@@ -441,22 +531,25 @@ def main(
         (missing_df_mha["AdmitDate"] > start_date) & (missing_df_mha["AdmitDate"] < end_date)
     ].copy()
 
-    missing_df_sfs = build_missing_sfs(alaya_dir)
+    missing_df_sfs = build_missing_sfs(alaya_dir, treat_dir)
     missing_df_sfs = missing_df_sfs[~(missing_df_sfs["ServiceCode"].astype(str).str.contains("YorkW", na=False))]
 
-    # ===== UPDATED SFS LOGIC =====
-    missing_df_sfs["ServiceStartDate"] = pd.to_datetime(missing_df_sfs["ServiceStartDate"], errors="coerce")
-    missing_df_sfs["FirstVisitDate"] = pd.to_datetime(missing_df_sfs["FirstVisitDate"], errors="coerce")
+    if "ServiceStartDate" in missing_df_sfs.columns:
+        missing_df_sfs["ServiceStartDate"] = pd.to_datetime(missing_df_sfs["ServiceStartDate"], errors="coerce")
+    if "FirstVisitDate" in missing_df_sfs.columns:
+        missing_df_sfs["FirstVisitDate"] = pd.to_datetime(missing_df_sfs["FirstVisitDate"], errors="coerce")
 
-    missing_df_sfs = missing_df_sfs[
-        (missing_df_sfs["ServiceStartDate"] > pd.Timestamp("2025-04-01"))
-        & (missing_df_sfs["ServiceStartDate"] < (pd.Timestamp.today() - pd.Timedelta(days=30)))
-    ].copy()
+    if "ServiceStartDate" in missing_df_sfs.columns:
+        missing_df_sfs = missing_df_sfs[
+            (missing_df_sfs["ServiceStartDate"] > pd.Timestamp("2025-04-01"))
+            & (missing_df_sfs["ServiceStartDate"] < (pd.Timestamp.today() - pd.Timedelta(days=30)))
+        ].copy()
 
-    missing_df_sfs = missing_df_sfs[
-        (missing_df_sfs["FirstVisitDate"].isna())
-        | (missing_df_sfs["FirstVisitDate"] > missing_df_sfs["ServiceStartDate"])
-    ].copy()
+    if "FirstVisitDate" in missing_df_sfs.columns and "ServiceStartDate" in missing_df_sfs.columns:
+        missing_df_sfs = missing_df_sfs[
+            (missing_df_sfs["FirstVisitDate"].isna())
+            | (missing_df_sfs["FirstVisitDate"] > missing_df_sfs["ServiceStartDate"])
+        ].copy()
 
     cm_mask = (
         missing_df_sfs["ServiceCodeDept"]
@@ -476,7 +569,6 @@ def main(
     missing_df_sfs = missing_df_sfs.drop_duplicates()
     missing_df_sfs = missing_df_sfs[missing_df_sfs["ServiceCodeDept"].astype(str).str.strip() != ""]
 
-    # ===== NEW: merge CM Supervisors.csv (left join; missing_df_sfs is left) =====
     cm_sup_path = alaya_dir / "CM Supervisors.csv"
     if not cm_sup_path.exists():
         cm_sup_path = newest_any("CM Supervisors", alaya_dir)
@@ -494,7 +586,6 @@ def main(
         left_on="ClientID",
         right_on=cm_id_col,
     )
-    # ===== END NEW =====
 
     out_path = export_to_excel(missing_df_mha, missing_df_sfs, out_path)
     return out_path, missing_df_mha, missing_df_sfs

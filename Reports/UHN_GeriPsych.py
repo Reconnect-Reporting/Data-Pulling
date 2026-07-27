@@ -14,11 +14,12 @@ DATA_DIR = Path(
 PROGRAM_FILTER = "UHN Geriatric Psychiatry"
 
 # ONLY for avg-day indicators
-ADMISSION_CUTOFF = pd.Timestamp("2025-09-01")
+ADMISSION_CUTOFF = pd.Timestamp("2026-01-01")
 
 # ---------------------- Helpers ----------------------
 def _read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, encoding="utf-8-sig")
+
 
 def _parse_date_multi(series: pd.Series, formats=("%m/%d/%Y", "%Y-%m-%d")) -> pd.Series:
     s = pd.to_datetime(series, format=formats[0], errors="coerce")
@@ -30,11 +31,14 @@ def _parse_date_multi(series: pd.Series, formats=("%m/%d/%Y", "%Y-%m-%d")) -> pd
             s2 = pd.to_datetime(series[mask], format=fmt, errors="coerce")
             s.loc[mask] = s2
             mask = s.isna()
+
     fallback = pd.to_datetime(series, errors="coerce")
     return s.fillna(fallback)
 
+
 def _prog_contains(series: pd.Series, needle: str) -> pd.Series:
     return series.astype(str).str.contains(needle, case=False, na=False)
+
 
 def _ensure_id_from_clientname(df: pd.DataFrame) -> pd.DataFrame:
     if "ID" not in df.columns or df["ID"].isna().all():
@@ -44,6 +48,7 @@ def _ensure_id_from_clientname(df: pd.DataFrame) -> pd.DataFrame:
                 errors="coerce",
             )
     return df
+
 
 def _first_event_mean_scalar(
     df: pd.DataFrame,
@@ -58,7 +63,12 @@ def _first_event_mean_scalar(
     if len(event_mask) != len(df):
         event_mask = pd.Series(False, index=df.index)
 
-    sub = df.loc[event_mask & df[date_col].notna(), ["ID", date_col, days_col]].dropna()
+    sub = df.loc[
+        event_mask
+        & df[date_col].notna()
+        & df[days_col].notna(),
+        ["ID", date_col, days_col]
+    ].dropna()
 
     if sub.empty:
         return None
@@ -72,6 +82,7 @@ def _first_event_mean_scalar(
     val = first_rows[days_col].mean()
 
     return None if pd.isna(val) else round(float(val), 1)
+
 
 # ---------------------- Core compute ----------------------
 def run_dict() -> dict:
@@ -128,19 +139,43 @@ def run_dict() -> dict:
         num_of_discharged_client = 0
 
     # ---------- Merge ----------
-    left_cols = [c for c in ["ClientName", "ID", "AdmitDate", "DischargeDate"] if c in census.columns]
-    right_cols = [c for c in ["ID", "Program", "Note Date", "Interaction Start Date", "Task"] if c in notes.columns]
+    left_cols = [
+        c for c in ["ClientName", "ID", "AdmitDate", "DischargeDate"]
+        if c in census.columns
+    ]
 
-    merged_all = census[left_cols].merge(notes[right_cols], on="ID", how="inner")
+    right_cols = [
+        c for c in ["ID", "Program", "Note Date", "Interaction Start Date", "Task"]
+        if c in notes.columns
+    ]
+
+    merged_all = census[left_cols].merge(
+        notes[right_cols],
+        on="ID",
+        how="inner"
+    )
 
     if not merged_all.empty:
 
-        if {"Note Date", "AdmitDate"}.issubset(merged_all.columns):
+        # Make sure contact date is based on Interaction Start Date
+        # This is the actual contact date used to find first NF2F / F2F.
+        if {"Interaction Start Date", "AdmitDate"}.issubset(merged_all.columns):
             merged_all["AdmissionDate_InteractionDate"] = (
-                merged_all["Note Date"] - merged_all["AdmitDate"]
+                merged_all["Interaction Start Date"] - merged_all["AdmitDate"]
             ).dt.days
+
+            # Important:
+            # Only keep contact rows where Interaction Start Date is later than AdmitDate.
+            # This prevents contacts before admission or same-day invalid rows from being used
+            # for first NF2F / first F2F average calculations.
+            merged_all["Contact_After_Admission"] = (
+                merged_all["Interaction Start Date"].notna()
+                & merged_all["AdmitDate"].notna()
+                & (merged_all["Interaction Start Date"] > merged_all["AdmitDate"])
+            )
         else:
             merged_all["AdmissionDate_InteractionDate"] = pd.NA
+            merged_all["Contact_After_Admission"] = False
 
         if {"DischargeDate", "AdmitDate"}.issubset(merged_all.columns):
             merged_all["AdmissionDate_DischargeDate"] = (
@@ -149,6 +184,11 @@ def run_dict() -> dict:
         else:
             merged_all["AdmissionDate_DischargeDate"] = pd.NA
 
+    else:
+        merged_all["AdmissionDate_InteractionDate"] = pd.NA
+        merged_all["AdmissionDate_DischargeDate"] = pd.NA
+        merged_all["Contact_After_Admission"] = False
+
     # ---------- Cutoff ONLY for avg indicators ----------
     merged_ind = merged_all[
         merged_all["AdmitDate"].notna()
@@ -156,8 +196,16 @@ def run_dict() -> dict:
     ].copy()
 
     # ---------- Avg days ----------
-    event_mask_nf2f = merged_ind["Task"] == "NF2F"
-    event_mask_f2f = merged_ind["Task"] == "Home/Community Visit"
+    # Only include contacts after admission date
+    event_mask_nf2f = (
+        (merged_ind["Task"] == "NF2F")
+        & (merged_ind["Contact_After_Admission"] == True)
+    )
+
+    event_mask_f2f = (
+        (merged_ind["Task"] == "Home/Community Visit")
+        & (merged_ind["Contact_After_Admission"] == True)
+    )
 
     avg_days_first_nf2f = _first_event_mean_scalar(
         merged_ind,
@@ -176,7 +224,9 @@ def run_dict() -> dict:
     avg_days_admin_dis = None
 
     if not merged_ind.empty:
-        sub = merged_ind[["ID", "DischargeDate", "AdmissionDate_DischargeDate"]].dropna()
+        sub = merged_ind[
+            ["ID", "DischargeDate", "AdmissionDate_DischargeDate"]
+        ].dropna()
 
         if not sub.empty:
             idx = sub.groupby("ID")["DischargeDate"].idxmin()
@@ -199,6 +249,7 @@ def run_dict() -> dict:
         "NF2F No Shows": nf2f_no_shows,
     }
 
+
 # ---------------------- Preview wrapper ----------------------
 def _to_preview_df(summary: dict) -> pd.DataFrame:
 
@@ -208,8 +259,10 @@ def _to_preview_df(summary: dict) -> pd.DataFrame:
 
     return pd.DataFrame(rows, columns=["Metric", "Value"])
 
+
 def run() -> pd.DataFrame:
     return _to_preview_df(run_dict())
+
 
 # ---------------------- CLI ----------------------
 if __name__ == "__main__":
