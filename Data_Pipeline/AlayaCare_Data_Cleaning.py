@@ -12,6 +12,14 @@ RAW_ROOT   = OD / "data" / "Raw Data" / "AlayaCare"
 CLEAN_DIR  = OD / "data" / "Clean Data" / "AlayaCare"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
+CLIENT_LOOKUP_DIR = (
+    Path.home()
+    / "Reconnect Community Health Services"
+    / "Health Services - Documents"
+    / "_library"
+    / "client_lookup"
+)
+
 # ===== Config =====
 EXTS    = [".csv", ".xlsx", ".xls"]
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -20,6 +28,7 @@ APPEND_DAYS = 5  # last 5 days
 # Raw folder -> Clean fixed base filename (no date)
 LATEST_COPY_REPORTS = {
     "ADT_with_Zone_and_Reference": "ADT with Zone and Reference",
+    "ADT_with_Zone_and_Reference_New_Referral_Date": "ADT with Zone and Reference New Referral Date",
     "CM_Supervisors":              "CM Supervisors",
     "CM_Supervisors_Discharged":   "CM Supervisors_Discharged",
     "Heart_at_Home":               "Heart at Home",
@@ -285,6 +294,17 @@ def update_latest_fixed_names():
         try:
             atomic_copy(latest, dest)
             print(f"[{clean_base_name}] Replaced Clean with: {latest.name} -> {dest.name}")
+
+            # ADT with Zone and Reference only:
+            # also overwrite a second copy in client_lookup.
+            if clean_base_name == "ADT with Zone and Reference":
+                CLIENT_LOOKUP_DIR.mkdir(parents=True, exist_ok=True)
+                second_dest = CLIENT_LOOKUP_DIR / dest.name
+                atomic_copy(dest, second_dest)
+                print(
+                    f"[{clean_base_name}] Also replaced client_lookup copy -> {second_dest}"
+                )
+
         except Exception as e:
             print(f"[{clean_base_name}] ERROR copying {latest}: {e}")
 

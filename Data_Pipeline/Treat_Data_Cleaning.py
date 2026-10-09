@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Iterable, Optional, List, Tuple
 
@@ -14,6 +15,15 @@ def raw_dir() -> Path:
 
 def clean_dir() -> Path:
     return Path.home() / "OneDrive - Reconnect Community Health Services (1)" / "data" / "Clean Data" / "Treat"
+
+def client_lookup_dir() -> Path:
+    return (
+        Path.home()
+        / "Reconnect Community Health Services"
+        / "Health Services - Documents"
+        / "_library"
+        / "client_lookup"
+    )
 
 # -------- Test IDs to remove --------
 TEST_IDS = {"1","10314","12675","7941","7942","9383","9384","11633","8239","7945","UNREG"}
@@ -583,6 +593,7 @@ def process_file(stem: str,
     dest = dst_folder / (dest_name_override if dest_name_override else src.name)
     _write_csv_atomic(dest, delim, header, rows)
     print(f"[OK] {src.name} -> {dest.name} (row {hdr_idx}, sep '{delim}', enc {enc})")
+    return dest
 
 def _drop_name_duplicates_case_insensitive_df(
     df: pd.DataFrame,
@@ -767,7 +778,23 @@ def run():
     clean.mkdir(parents=True, exist_ok=True)
 
     # ---- Existing CSV flows ----
-    process_file("ADTCensusCAN", ["NewAdmissionstoOrg"], per_file_transform=_adtcensuscan_transform)
+    adt_out = process_file(
+        "ADTCensusCAN",
+        ["NewAdmissionstoOrg"],
+        per_file_transform=_adtcensuscan_transform
+    )
+
+    # ADTCensusCAN only: keep the original Clean Data/Treat output and
+    # overwrite a second copy in the Health Services client_lookup folder.
+    if adt_out and adt_out.exists():
+        lookup_folder = client_lookup_dir()
+        lookup_folder.mkdir(parents=True, exist_ok=True)
+
+        lookup_out = lookup_folder / adt_out.name
+        shutil.copy2(adt_out, lookup_out)  # overwrites existing file each run
+
+        print(f"[OK] ADTCensusCAN copied/replaced -> {lookup_out}")
+
     process_file(
         "RECONNECTWORKProofingByClinician",
         ["textbox121"],

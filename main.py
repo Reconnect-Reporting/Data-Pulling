@@ -217,9 +217,9 @@ STEPS = [
     ("clean",  "[1/17] Cleaning Folder",                   "Auto_reports_pulling.Clean_Download_Folder"),
 
     ("treat",  "[2/17] Pulling Treat Reports",             "Auto_reports_pulling.Treat_Pulling"),
-    ("stimes_pull", "[3/17] Pulling Sound Times Treat Reports", "Auto_reports_pulling.Stimes_Treat_Pulling"),
+    ("move",   "[3/17] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
 
-    ("move",   "[4/17] Moving Treat Files to OneDrive",    "Data_Pipeline.Treat_File_Moving"),
+    ("stimes_pull", "[4/17] Pulling Sound Times Treat Reports", "Auto_reports_pulling.Stimes_Treat_Pulling"),
     ("stimes_move", "[5/17] Moving Sound Times Treat Files", "Data_Pipeline.Stimes_Treat_File_Moving"),
 
     ("alaya",  "[6/17] Pulling AlayaCare Reports",         "Auto_reports_pulling.AlayaCare_Pulling"),

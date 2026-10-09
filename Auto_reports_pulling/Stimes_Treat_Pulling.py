@@ -58,13 +58,21 @@ def subtract_months(original_date, months):
 
 def get_last_6_month_dates():
     """
-    Last 6 months logic for Workload report.
-    Example: If today is May 11, 2026,
-    Start Date = Nov 11, 2025
-    End Date = May 11, 2026
+    Six calendar months including the current month.
+    Example: If today is Aug 31, 2026,
+    Start Date = Mar 1, 2026
+    End Date = Aug 31, 2026
     """
     today = datetime.today().date()
-    start_dt = subtract_months(today, 6)
+
+    month = today.month - 5
+    year = today.year
+
+    while month <= 0:
+        month += 12
+        year -= 1
+
+    start_dt = date(year, month, 1)
 
     return start_dt.strftime("%d-%b-%Y"), today.strftime("%d-%b-%Y")
 
@@ -84,9 +92,10 @@ def is_temp_download_file(file_path):
 
 def snapshot_downloads(download_dir):
     """
-    Take a snapshot of current files in the download folder.
-    Used before export so we can detect the new file after export.
-    Ignores temporary Chrome download files.
+    Take a snapshot of current CSV files in the download folder.
+
+    Only CSV files are tracked. This prevents unrelated browser files
+    such as downloads.htm from being mistaken for a downloaded report.
     """
     download_dir = Path(download_dir)
     snapshot = {}
@@ -95,11 +104,23 @@ def snapshot_downloads(download_dir):
         download_dir.mkdir(parents=True, exist_ok=True)
 
     for file in download_dir.iterdir():
-        if file.is_file() and not is_temp_download_file(file):
-            try:
-                snapshot[file.name] = (file.stat().st_mtime, file.stat().st_size)
-            except FileNotFoundError:
-                pass
+        if not file.is_file():
+            continue
+
+        if is_temp_download_file(file):
+            continue
+
+        # IMPORTANT: only track exported CSV report files
+        if file.suffix.lower() != ".csv":
+            continue
+
+        try:
+            snapshot[file.name] = (
+                file.stat().st_mtime,
+                file.stat().st_size
+            )
+        except FileNotFoundError:
+            pass
 
     return snapshot
 
@@ -143,86 +164,135 @@ def wait_until_file_stable(file_path, stable_seconds=2, timeout=60):
 
 def wait_for_new_download(download_dir, before_snapshot, timeout=240):
     """
-    Wait for a new or updated downloaded file.
-    Ignores .crdownload and .tmp files until download is complete.
+    Wait for a new or updated CSV report download.
+
+    IMPORTANT:
+    - Only CSV files are considered valid report downloads.
+    - Unrelated files such as downloads.htm are completely ignored.
+    - Chrome temporary files are ignored until the download completes.
     """
     download_dir = Path(download_dir)
     end_time = time.time() + timeout
 
     while time.time() < end_time:
-        temp_downloads = [
-            file for file in download_dir.iterdir()
-            if file.is_file() and is_temp_download_file(file)
-        ]
-
-        if temp_downloads:
-            time.sleep(0.5)
-            continue
 
         current_files = {}
 
         for file in download_dir.iterdir():
-            if file.is_file() and not is_temp_download_file(file):
-                try:
-                    current_files[file.name] = (file.stat().st_mtime, file.stat().st_size)
-                except FileNotFoundError:
-                    pass
+            if not file.is_file():
+                continue
+
+            # Ignore Chrome temporary files
+            if is_temp_download_file(file):
+                continue
+
+            # IMPORTANT: only consider CSV report files
+            if file.suffix.lower() != ".csv":
+                continue
+
+            try:
+                current_files[file.name] = (
+                    file.stat().st_mtime,
+                    file.stat().st_size
+                )
+            except FileNotFoundError:
+                pass
 
         changed_files = []
 
         for filename, file_info in current_files.items():
+
+            # Brand-new CSV filename
             if filename not in before_snapshot:
                 changed_files.append(download_dir / filename)
+
+            # Existing filename that Chrome/Treat replaced or updated
             elif before_snapshot[filename] != file_info:
                 changed_files.append(download_dir / filename)
 
         if changed_files:
-            newest_file = max(changed_files, key=lambda f: f.stat().st_mtime)
-            wait_until_file_stable(newest_file, stable_seconds=2, timeout=60)
+
+            # Pick the newest changed CSV only
+            newest_file = max(
+                changed_files,
+                key=lambda f: f.stat().st_mtime
+            )
+
+            print(f"Detected downloaded CSV: {newest_file.name}")
+
+            # Make sure the actual CSV has finished writing
+            wait_until_file_stable(
+                newest_file,
+                stable_seconds=2,
+                timeout=60
+            )
+
             return newest_file
 
         time.sleep(0.5)
 
-    raise TimeoutError("No new completed download was detected within the timeout period.")
+    raise TimeoutError(
+        "No new completed CSV download was detected within the timeout period."
+    )
 
 
 def add_stimes_to_filename(file_path, forced_base_name=None):
     """
-    Rename downloaded file to include _Stimes.
+    Rename downloaded file by adding _Stimes.
 
-    Example:
-      ADTCensusCAN.csv -> ADTCensusCAN_Stimes.csv
+    Examples:
+        ADTCensusCAN.csv
+        -> ADTCensusCAN_Stimes.csv
 
-    If forced_base_name is provided:
-      downloaded_file.csv -> forced_base_name_Stimes.csv
+    If that already exists:
+        -> ADTCensusCAN_Stimes_1.csv
+        -> ADTCensusCAN_Stimes_2.csv
+        -> etc.
+
+    Existing files are NEVER overwritten.
     """
+
     file_path = Path(file_path)
 
     if not file_path.exists():
-        raise FileNotFoundError(f"Downloaded file not found: {file_path}")
+        raise FileNotFoundError(
+            f"Downloaded file not found: {file_path}"
+        )
 
     if is_temp_download_file(file_path):
-        raise RuntimeError(f"Refusing to rename temporary download file: {file_path}")
+        raise RuntimeError(
+            f"Refusing to rename temporary download file: {file_path}"
+        )
 
+    # Keep original extension
     suffix = file_path.suffix if file_path.suffix else ".csv"
 
+    # Use forced filename if provided
     if forced_base_name:
         base_name = forced_base_name
     else:
         base_name = file_path.stem
 
-    if base_name.endswith("_Stimes"):
+    # Prevent duplicate _Stimes
+    if base_name.lower().endswith("_stimes"):
         base_name = base_name[:-7]
 
-    new_name = f"{base_name}_Stimes{suffix}"
-    new_path = file_path.with_name(new_name)
+    # Desired filename
+    new_path = file_path.parent / f"{base_name}_Stimes{suffix}"
 
+    # =====================================================
+    # DO NOT OVERWRITE EXISTING FILES
+    # =====================================================
     counter = 1
+
     while new_path.exists():
-        new_name = f"{base_name}_Stimes_{counter}{suffix}"
-        new_path = file_path.with_name(new_name)
+        new_path = (
+            file_path.parent /
+            f"{base_name}_Stimes_{counter}{suffix}"
+        )
         counter += 1
 
+    # Rename downloaded file
     file_path.rename(new_path)
 
     print("Renamed downloaded file:")
@@ -230,7 +300,6 @@ def add_stimes_to_filename(file_path, forced_base_name=None):
     print(f"  To:   {new_path.name}")
 
     return new_path
-
 
 # ===================== DRIVER SETUP =====================
 def build_driver():
@@ -380,20 +449,20 @@ def export_csv(driver, report_name="", forced_base_name=None):
 
     before_snapshot = snapshot_downloads(DOWNLOAD_DIR)
 
-    WebDriverWait(driver, 120).until(
+    WebDriverWait(driver, 300).until(
         EC.frame_to_be_available_and_switch_to_it((By.ID, "reportViewer"))
     )
 
     print("Switched into reportViewer iframe.")
 
-    export_dropdown = WebDriverWait(driver, 120).until(
+    export_dropdown = WebDriverWait(driver, 300).until(
         EC.presence_of_element_located((By.ID, "rvViewer_ctl01_ctl05_ctl00"))
     )
 
     Select(export_dropdown).select_by_visible_text("CSV (comma delimited)")
     print("Selected CSV format.")
 
-    export_btn = WebDriverWait(driver, 60).until(
+    export_btn = WebDriverWait(driver, 300).until(
         EC.element_to_be_clickable((By.ID, "rvViewer_ctl01_ctl05_ctl01"))
     )
 
@@ -621,7 +690,7 @@ def run_referral_summary_drillthrough(driver, wait, fragment, export_label):
     go_to_main_reports_page(driver, wait, wait_for_report_id="report25B")
     open_report(driver, wait, "report25B", "Referral Summary Report")
 
-    start_date, end_date = get_yearly_cycle_dates()
+    start_date, end_date = get_last_6_month_dates()
     enter_dates(driver, wait, start_date, end_date)
 
     choose_all_programs(driver, wait)
@@ -702,7 +771,7 @@ def main():
             wait=wait,
             report_id="report4B",
             report_name="ADT - Census Report",
-            date_mode="yearly",
+            date_mode="last_6_months",
             select_programs=False,
             forced_base_name="ADTCensusCAN"
         )
@@ -713,7 +782,7 @@ def main():
             wait=wait,
             report_id="report13B",
             report_name="MIS - Statistics Report",
-            date_mode="yearly",
+            date_mode="last_6_months",
             select_programs=True
         )
 
@@ -723,7 +792,7 @@ def main():
             wait=wait,
             report_id="report24B",
             report_name="Progress Notes - Staff Log for Finance",
-            date_mode="yearly",
+            date_mode="last_6_months",
             select_programs=True
         )
 
