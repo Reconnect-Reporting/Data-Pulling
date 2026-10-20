@@ -204,6 +204,10 @@ def _apply_treat_env(username: str, password: str) -> None:
     os.environ["TREAT_USERNAME"] = username
     os.environ["TREAT_PASSWORD"] = password
 
+def _apply_stimes_env(username: str, password: str) -> None:
+    os.environ["STIMES_USERNAME"] = username
+    os.environ["STIMES_PASSWORD"] = password
+
 def _apply_caredove_env(email: str, password: str) -> None:
     os.environ["CAREDOVE_EMAIL"] = email
     os.environ["CAREDOVE_PASSWORD"] = password
@@ -269,7 +273,8 @@ REPORTS = [
     ("ipc", "IPC Report (open in new window)", "Reports.IPC_Report","monthly"),
     ("coss", "COSS Report (open in new window)", "Reports.COSS_Report","monthly"),
     ("trapeze", "Trapeze Report (Save to Downloads)", "Reports.Trapeze_Report","weekly"),
-    ("tch_tsh", "TCH_TSH Report (Save to Downloads)", "Reports.TCH_TSH_Report","weekly")
+    ("tch_tsh", "TCH_TSH Report (Save to Downloads)", "Reports.TCH_TSH_Report","weekly"),
+    ("env_scn", "Environmental Scan Report (Save to Downloads)", "Reports.Overdue_Environ_Scans","weekly")
 ]
 
 STATUS_COLORS = {
@@ -857,6 +862,10 @@ class MainWindow(QMainWindow):
             os.environ["TREAT_USERNAME"] = self.settings["TREAT_USERNAME"]
         if "TREAT_PASSWORD" in self.settings:
             os.environ["TREAT_PASSWORD"] = self.settings["TREAT_PASSWORD"]
+        if "STIMES_USERNAME" in self.settings:
+            os.environ["STIMES_USERNAME"] = self.settings["STIMES_USERNAME"]
+        if "STIMES_PASSWORD" in self.settings:
+            os.environ["STIMES_PASSWORD"] = self.settings["STIMES_PASSWORD"]
         if "CAREDOVE_EMAIL" in self.settings:
             os.environ["CAREDOVE_EMAIL"] = self.settings["CAREDOVE_EMAIL"]
         if "CAREDOVE_PASSWORD" in self.settings:
@@ -921,39 +930,86 @@ class MainWindow(QMainWindow):
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(3, 1)
 
+        # ==================== TREAT ====================
         treat_title = QLabel("<b>Treat</b>")
         gl.addWidget(treat_title, 0, 0, 1, 5)
 
-        self.in_user = QLineEdit(os.getenv("TREAT_USERNAME", self.settings.get("TREAT_USERNAME", "yxu")))
-        self.in_pass = QLineEdit(os.getenv("TREAT_PASSWORD", self.settings.get("TREAT_PASSWORD", "")))
+        self.in_user = QLineEdit(
+            os.getenv("TREAT_USERNAME", self.settings.get("TREAT_USERNAME", "yxu"))
+        )
+        self.in_pass = QLineEdit(
+            os.getenv("TREAT_PASSWORD", self.settings.get("TREAT_PASSWORD", ""))
+        )
         self.in_pass.setEchoMode(QLineEdit.Password)
 
-        gl.addWidget(QLabel("Username"), 1, 0); gl.addWidget(self.in_user, 1, 1)
-        gl.addWidget(QLabel("Password"), 1, 2); gl.addWidget(self.in_pass, 1, 3)
+        gl.addWidget(QLabel("Username"), 1, 0)
+        gl.addWidget(self.in_user, 1, 1)
+        gl.addWidget(QLabel("Password"), 1, 2)
+        gl.addWidget(self.in_pass, 1, 3)
 
+
+        # ==================== SOUND TIMES TREAT ====================
+        stimes_title = QLabel("<b>Sound Times Treat</b>")
+        gl.addWidget(stimes_title, 3, 0, 1, 5)
+
+        self.stimes_user = QLineEdit(
+            os.getenv("STIMES_USERNAME", self.settings.get("STIMES_USERNAME", ""))
+        )
+        self.stimes_pass = QLineEdit(
+            os.getenv("STIMES_PASSWORD", self.settings.get("STIMES_PASSWORD", ""))
+        )
+        self.stimes_pass.setEchoMode(QLineEdit.Password)
+
+        gl.addWidget(QLabel("Username"), 4, 0)
+        gl.addWidget(self.stimes_user, 4, 1)
+        gl.addWidget(QLabel("Password"), 4, 2)
+        gl.addWidget(self.stimes_pass, 4, 3)
+
+
+        # ==================== CAREDOVE ====================
         caredove_title = QLabel("<b>Caredove</b>")
-        gl.addWidget(caredove_title, 3, 0, 1, 5)
+        gl.addWidget(caredove_title, 6, 0, 1, 5)
 
-        self.cd_email = QLineEdit(os.getenv("CAREDOVE_EMAIL", self.settings.get("CAREDOVE_EMAIL", "")))
-        self.cd_pass  = QLineEdit(os.getenv("CAREDOVE_PASSWORD", self.settings.get("CAREDOVE_PASSWORD", "")))
+        self.cd_email = QLineEdit(
+            os.getenv("CAREDOVE_EMAIL", self.settings.get("CAREDOVE_EMAIL", ""))
+        )
+        self.cd_pass = QLineEdit(
+            os.getenv("CAREDOVE_PASSWORD", self.settings.get("CAREDOVE_PASSWORD", ""))
+        )
         self.cd_pass.setEchoMode(QLineEdit.Password)
 
-        gl.addWidget(QLabel("Email"),    4, 0); gl.addWidget(self.cd_email, 4, 1)
-        gl.addWidget(QLabel("Password"), 4, 2); gl.addWidget(self.cd_pass,  4, 3)
+        gl.addWidget(QLabel("Email"), 7, 0)
+        gl.addWidget(self.cd_email, 7, 1)
+        gl.addWidget(QLabel("Password"), 7, 2)
+        gl.addWidget(self.cd_pass, 7, 3)
 
+
+        # ==================== TRAPEZE ====================
         trapeze_title = QLabel("<b>Trapeze</b>")
-        gl.addWidget(trapeze_title, 6, 0, 1, 5)
+        gl.addWidget(trapeze_title, 9, 0, 1, 5)
 
-        self.tr_user = QLineEdit(os.getenv("TRAPEZE_USERNAME", self.settings.get("TRAPEZE_USERNAME", "")))
-        self.tr_pass = QLineEdit(os.getenv("TRAPEZE_PASSWORD", self.settings.get("TRAPEZE_PASSWORD", "")))
+        self.tr_user = QLineEdit(
+            os.getenv("TRAPEZE_USERNAME", self.settings.get("TRAPEZE_USERNAME", ""))
+        )
+        self.tr_pass = QLineEdit(
+            os.getenv("TRAPEZE_PASSWORD", self.settings.get("TRAPEZE_PASSWORD", ""))
+        )
         self.tr_pass.setEchoMode(QLineEdit.Password)
 
-        gl.addWidget(QLabel("Username"), 7, 0); gl.addWidget(self.tr_user, 7, 1)
-        gl.addWidget(QLabel("Password"), 7, 2); gl.addWidget(self.tr_pass, 7, 3)
+        gl.addWidget(QLabel("Username"), 10, 0)
+        gl.addWidget(self.tr_user, 10, 1)
+        gl.addWidget(QLabel("Password"), 10, 2)
+        gl.addWidget(self.tr_pass, 10, 3)
 
+
+        # ==================== SAVE ====================
         self.btn_save_creds = QPushButton("Save")
         self.btn_save_creds.clicked.connect(self._save_creds)
-        gl.addWidget(self.btn_save_creds, 8, 0, 1, 5, alignment=Qt.AlignRight)
+
+        gl.addWidget(
+            self.btn_save_creds, 11, 0, 1, 5,
+            alignment=Qt.AlignRight
+        )
 
         self.flow = FlowView(self, icons_dir=Path(__file__).resolve().parent / "icons")
         auto_layout.addWidget(self.flow)
@@ -1173,6 +1229,8 @@ class MainWindow(QMainWindow):
     def _save_creds(self):
         u = self.in_user.text().strip()
         p = self.in_pass.text()
+        stimes_u = self.stimes_user.text().strip()
+        stimes_p = self.stimes_pass.text()
         cd_email = self.cd_email.text().strip()
         cd_pass  = self.cd_pass.text()
         tr_u = self.tr_user.text().strip()
@@ -1181,6 +1239,7 @@ class MainWindow(QMainWindow):
         risk_email_cc = self.risk_email_cc.text().strip() if hasattr(self, "risk_email_cc") else os.getenv("RISK_SUMMARY_EMAIL_CC", "").strip()
 
         _apply_treat_env(u, p)
+        _apply_stimes_env(stimes_u, stimes_p)
         _apply_caredove_env(cd_email, cd_pass)
         _apply_trapeze_env(tr_u, tr_p)
         _apply_risk_email_env(risk_email_to, risk_email_cc)
@@ -1188,6 +1247,8 @@ class MainWindow(QMainWindow):
         s = dict(_load_settings())
         s["TREAT_USERNAME"]      = u
         s["TREAT_PASSWORD"]      = p
+        s["STIMES_USERNAME"] = stimes_u
+        s["STIMES_PASSWORD"] = stimes_p
         s["CAREDOVE_EMAIL"]      = cd_email
         s["CAREDOVE_PASSWORD"]   = cd_pass
         s["TRAPEZE_USERNAME"]    = tr_u
@@ -1196,7 +1257,7 @@ class MainWindow(QMainWindow):
         s["RISK_SUMMARY_EMAIL_CC"] = risk_email_cc
         _save_settings(s)
 
-        self._log("Saved Treat, Caredove, Trapeze, and Risk Summary email settings.")
+        self._log("Saved Treat, Sound Times Treat, Caredove, Trapeze, and Risk Summary email settings.")
 
     def _log(self, msg: str):
         self.log.appendPlainText(msg.rstrip())

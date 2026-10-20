@@ -18,8 +18,9 @@ LOGIN_URL = "https://sharedservices.treat.ca/treat/logon"
 REPORTS_URL = "https://sharedservices.treat.ca/treat/app/reports?page=newReports"
 
 ORG_ID = "stimes"
-USERNAME = "yxu"
-PASSWORD = "Jiazhuo2018#111"
+
+USERNAME = None
+PASSWORD = None
 
 DOWNLOAD_DIR = Path.home() / "Downloads"
 
@@ -708,7 +709,14 @@ def login(driver, wait):
     time.sleep(2)
 
     bypass_ssl_page_if_needed(driver)
+    username = os.getenv("STIMES_USERNAME", "").strip()
+    password = os.getenv("STIMES_PASSWORD", "")
 
+    if not username or not password:
+        raise RuntimeError(
+            "Sound Times Treat credentials are missing. "
+            "Please update them in the main application."
+        )
     safe_type(
         driver=driver,
         wait=wait,
@@ -731,7 +739,7 @@ def login(driver, wait):
         wait=wait,
         by=By.ID,
         value="username",
-        text=USERNAME,
+        text=username,
         field_name="User ID"
     )
 
@@ -740,7 +748,7 @@ def login(driver, wait):
         wait=wait,
         by=By.ID,
         value="password",
-        text=PASSWORD,
+        text=password,
         field_name="Password"
     )
 

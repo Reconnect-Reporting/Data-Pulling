@@ -75,13 +75,18 @@ def _target_dir() -> Path:
     t.mkdir(parents=True, exist_ok=True)
     return t
 
-def previous_full_week_monday_sunday(today=None):
+def previous_full_month(today=None):
     if today is None:
         today = datetime.today()
-    this_monday = today - timedelta(days=today.weekday())
-    last_monday = this_monday - timedelta(days=7)
-    last_sunday = last_monday + timedelta(days=6)
-    return last_monday.strftime("%m/%d/%Y"), last_sunday.strftime("%m/%d/%Y")
+
+    first_day_this_month = today.replace(day=1)
+    last_day_previous_month = first_day_this_month - timedelta(days=1)
+    first_day_previous_month = last_day_previous_month.replace(day=1)
+
+    return (
+        first_day_previous_month.strftime("%m/%d/%Y"),
+        last_day_previous_month.strftime("%m/%d/%Y")
+    )
 
 def _fmt_date_for_name(s: str) -> str:
     s = s.strip()
@@ -566,14 +571,14 @@ def run(
 ):
     username, password = _get_creds_from_env()
     if not start_date or not end_date:
-        start_date, end_date = previous_full_week_monday_sunday()
+        start_date, end_date = previous_full_month()
     return _run_once(url, username, password, start_date, end_date, download_dir, headless, keep_open)
 
 # =========================
 # CLI
 # =========================
 def main():
-    sd, ed = previous_full_week_monday_sunday()
+    sd, ed = previous_full_month()
     run(start_date=sd, end_date=ed)
 
 if __name__ == "__main__":
