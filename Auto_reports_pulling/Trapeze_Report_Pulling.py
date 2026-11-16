@@ -53,19 +53,31 @@ def _home() -> Path:
 def _downloads_dir() -> Path:
     return _home() / "Downloads"
 
+
 def _detect_onedrive_root() -> Path | None:
+
+    # FIRST: Check the preferred OneDrive folder
+    preferred = _home() / "OneDrive - Reconnect Community Health Services (1)"
+
+    if preferred.is_dir():
+        return preferred
+
+    # SECOND: Check Windows OneDrive environment variables
     for key in ("OneDriveCommercial", "OneDrive", "OneDriveConsumer"):
         p = os.getenv(key)
-        if p and Path(p).exists():
+        if p and Path(p).is_dir():
             return Path(p)
+
+    # THIRD: Check other OneDrive folders
     for c in [
-        _home() / "OneDrive - Reconnect Community Health Services (1)",
         _home() / "OneDrive - Reconnect Community Health Services",
         _home() / "OneDrive",
     ]:
-        if c.exists():
+        if c.is_dir():
             return c
+
     return None
+
 
 def _target_dir() -> Path:
     od = _detect_onedrive_root()
@@ -75,17 +87,20 @@ def _target_dir() -> Path:
     t.mkdir(parents=True, exist_ok=True)
     return t
 
-def previous_full_month(today=None):
+def previous_full_week(today=None):
     if today is None:
         today = datetime.today()
 
-    first_day_this_month = today.replace(day=1)
-    last_day_previous_month = first_day_this_month - timedelta(days=1)
-    first_day_previous_month = last_day_previous_month.replace(day=1)
+    # Find Monday of the current week
+    monday_this_week = today - timedelta(days=today.weekday())
+
+    # Previous week's Monday and Sunday
+    monday_last_week = monday_this_week - timedelta(days=7)
+    sunday_last_week = monday_this_week - timedelta(days=1)
 
     return (
-        first_day_previous_month.strftime("%m/%d/%Y"),
-        last_day_previous_month.strftime("%m/%d/%Y")
+        monday_last_week.strftime("%m/%d/%Y"),
+        sunday_last_week.strftime("%m/%d/%Y")
     )
 
 def _fmt_date_for_name(s: str) -> str:
@@ -464,7 +479,7 @@ def _build_driver(download_dir=None, headless=False, keep_open=False):
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
         })
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+    driver = webdriver.Chrome(options=opts)
     driver.set_page_load_timeout(120)
     return driver
 
@@ -561,6 +576,7 @@ def _run_once(url, username, password, start_date, end_date, download_dir=None, 
 # =========================
 # Public API
 # =========================
+
 def run(
     url: str = URL,
     start_date: str | None = None,
@@ -570,16 +586,28 @@ def run(
     keep_open: bool = KEEP_OPEN,
 ):
     username, password = _get_creds_from_env()
+
     if not start_date or not end_date:
-        start_date, end_date = previous_full_month()
-    return _run_once(url, username, password, start_date, end_date, download_dir, headless, keep_open)
+        start_date, end_date = previous_full_week()
+
+    return _run_once(
+        url,
+        username,
+        password,
+        start_date,
+        end_date,
+        download_dir,
+        headless,
+        keep_open
+    )
 
 # =========================
 # CLI
 # =========================
 def main():
-    sd, ed = previous_full_month()
+    sd, ed = previous_full_week()
     run(start_date=sd, end_date=ed)
 
 if __name__ == "__main__":
     main()
+
