@@ -1220,8 +1220,8 @@ def run():
     time.sleep(1)
 #
     # --- Report 42B Workload---
-    print("Running report 42B...")
-    find_report("report42B")
+    print("Running report 48B...")
+    find_report("report48B")
     set_dates()
     click_generate()
     download_csv_from_viewer()
@@ -1248,7 +1248,7 @@ def run():
     back_to_synthesis_home()
     time.sleep(1)
 
-        # --- Report 31B New Referrals ---
+        # --- Report 32B New Referrals ---
     print("Running report 32B (Referral Reports New Referrals)...")
     find_report("report32B")
     set_dates()
@@ -1274,7 +1274,7 @@ def run():
     back_to_synthesis_home(timeout=20)
     time.sleep(2)
 #
-    # --- 31B — Is Waitlisted total ---
+    # --- 32B — Is Waitlisted total ---
     print("Running report 32B (Census) — Is Waitlisted...")
     find_report("report32B")
     set_dates()
@@ -1303,7 +1303,7 @@ def run():
     webfocus_tiles = ["Assessments", "External Documents", "Demographics_Active & Discharged", "Note Content RAC","IPCC Goal","IPCC Issue"]
 
     for idx, tile_label in enumerate(webfocus_tiles):
-        find_report("report41B")
+        find_report("report47B")
         click_generate_external()
         click_generate_external_in_buttons_container(timeout=360)
 
