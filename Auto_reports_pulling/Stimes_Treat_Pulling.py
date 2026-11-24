@@ -1,6 +1,7 @@
 import os
 import time
 import calendar
+import json
 from pathlib import Path
 from datetime import datetime, date
 
@@ -16,11 +17,20 @@ from selenium.webdriver.support import expected_conditions as EC
 # ===================== CONFIG =====================
 LOGIN_URL = "https://sharedservices.treat.ca/treat/logon"
 REPORTS_URL = "https://sharedservices.treat.ca/treat/app/reports?page=newReports"
-
 ORG_ID = "stimes"
+SETTINGS_FILE = Path(__file__).resolve().parent.parent / "user_settings.json"
 
-USERNAME = None
-PASSWORD = None
+def get_stimes_credentials():
+    settings = {}
+
+    if SETTINGS_FILE.exists():
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+
+    username = os.getenv("USERNAME") or settings.get("USERNAME", "")
+    password = os.getenv("PASSWORD") or settings.get("PASSWORD", "")
+
+    return str(username).strip(), str(password)
 
 DOWNLOAD_DIR = Path.home() / "Downloads"
 
@@ -709,8 +719,7 @@ def login(driver, wait):
     time.sleep(2)
 
     bypass_ssl_page_if_needed(driver)
-    username = os.getenv("STIMES_USERNAME", "").strip()
-    password = os.getenv("STIMES_PASSWORD", "")
+    username, password = get_stimes_credentials()
 
     if not username or not password:
         raise RuntimeError(
@@ -808,7 +817,7 @@ def main():
         run_report(
             driver=driver,
             wait=wait,
-            report_id="report31B",
+            report_id="report37B",
             report_name="Workload - Proofing Report by Clinician",
             date_mode="last_6_months",
             select_programs=False
